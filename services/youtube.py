@@ -5,43 +5,22 @@ import re
 import os
 from datetime import datetime, timedelta
 from googleapiclient.discovery import build
-from config import YOUTUBE_API_KEY
-
-
-def _env_csv(name: str, default_csv: str) -> list[str]:
-    raw = os.getenv(name, default_csv)
-    return [item.strip().upper() for item in raw.split(",") if item.strip()]
-
-
-def _env_region_map(name: str, default_map: dict[str, str]) -> dict[str, str]:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default_map
-    parsed: dict[str, str] = {}
-    for pair in raw.split(","):
-        if ":" not in pair:
-            continue
-        key, value = pair.split(":", 1)
-        key = key.strip().upper()
-        value = value.strip().upper()
-        if key and value:
-            parsed[key] = value
-    return parsed or default_map
-
-
-YOUTUBE_DEFAULT_REGION = os.getenv("YOUTUBE_DEFAULT_REGION", "US").strip().upper() or "US"
-YOUTUBE_RELEVANCE_LANGUAGE = os.getenv("YOUTUBE_RELEVANCE_LANGUAGE", "en").strip() or "en"
-REGION_MAP = _env_region_map("YOUTUBE_REGION_MAP", {"US": "US", "UK": "GB", "GB": "GB"})
-ALLOWED_COUNTRIES_BY_REGION = {
-    "Both": _env_csv("YOUTUBE_ALLOWED_COUNTRIES_BOTH", "US,GB"),
-    "US": _env_csv("YOUTUBE_ALLOWED_COUNTRIES_US", "US"),
-    "UK": _env_csv("YOUTUBE_ALLOWED_COUNTRIES_UK", "GB"),
-}
-
-EXCLUSION_KEYWORDS = _env_csv(
-    "YOUTUBE_EXCLUSION_KEYWORDS", 
-    "montage,edit,amv,gmv,phonk,tribute,status,alight motion,capcut,velocity,lyrics,ffx"
+from core.config import (
+    YOUTUBE_API_KEY,
+    YOUTUBE_DEFAULT_REGION,
+    YOUTUBE_RELEVANCE_LANGUAGE,
+    YOUTUBE_REGION_MAP as REGION_MAP,
+    ALLOWED_COUNTRIES_BOTH,
+    ALLOWED_COUNTRIES_US,
+    ALLOWED_COUNTRIES_UK,
+    YOUTUBE_EXCLUSION_KEYWORDS as EXCLUSION_KEYWORDS
 )
+
+ALLOWED_COUNTRIES_BY_REGION = {
+    "Both": ALLOWED_COUNTRIES_BOTH,
+    "US": ALLOWED_COUNTRIES_US,
+    "UK": ALLOWED_COUNTRIES_UK,
+}
 
 
 def _build_client():

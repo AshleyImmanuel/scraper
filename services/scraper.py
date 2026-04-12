@@ -27,53 +27,30 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from playwright_stealth import Stealth
 import asyncio
-from config import SCRAPER_API_KEY
+from core.config import (
+    SCRAPER_API_KEY,
+    SCRAPER_MAX_RETRIES as MAX_RETRIES,
+    SCRAPER_RETRY_DELAY_MS as RETRY_DELAY_MS,
+    SCRAPER_THROTTLE_MS as THROTTLE_MS,
+    ABOUT_TIMEOUT_MS,
+    CHANNEL_TIMEOUT_MS,
+    EXTERNAL_TIMEOUT_MS,
+    ABOUT_POST_LOAD_WAIT_MS,
+    CONSENT_CLICK_TIMEOUT_MS,
+    CONSENT_POST_CLICK_WAIT_MS,
+    VIEW_EMAIL_CLICK_TIMEOUT_MS,
+    VIEW_EMAIL_POST_CLICK_WAIT_MS,
+    CHANNEL_POST_LOAD_WAIT_MS,
+    EXTERNAL_POST_LOAD_WAIT_MS,
+    SCRAPER_CONCURRENCY,
+    SCRAPER_EMAIL_BLACKLIST as BLACKLIST
+)
 
 # Regex to find email addresses
 EMAIL_REGEX = re.compile(
     r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
 )
 
-# Common junk emails to ignore
-def _env_csv(name: str, default_csv: str) -> set[str]:
-    raw = os.getenv(name, default_csv)
-    return {item.strip().lower() for item in raw.split(",") if item.strip()}
-
-
-BLACKLIST = _env_csv(
-    "SCRAPER_EMAIL_BLACKLIST",
-    "noreply@youtube.com,support@google.com,press@youtube.com,example@example.com,name@example.com,email@example.com,copyright@youtube.com,legal@google.com,abuse@youtube.com"
-)
-
-def _env_int(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
-    raw = os.getenv(name)
-    value = default
-    if raw is not None:
-        try:
-            value = int(raw.strip())
-        except (TypeError, ValueError):
-            value = default
-    if minimum is not None:
-        value = max(minimum, value)
-    if maximum is not None:
-        value = min(maximum, value)
-    return value
-
-
-MAX_RETRIES = _env_int("SCRAPER_MAX_RETRIES", 2, minimum=1, maximum=6)
-RETRY_DELAY_MS = _env_int("SCRAPER_RETRY_DELAY_MS", 2000, minimum=250, maximum=60000)
-THROTTLE_MS = _env_int("SCRAPER_THROTTLE_MS", 0, minimum=0, maximum=15000)
-ABOUT_TIMEOUT_MS = _env_int("SCRAPER_ABOUT_TIMEOUT_MS", 20000, minimum=5000, maximum=120000)
-CHANNEL_TIMEOUT_MS = _env_int("SCRAPER_CHANNEL_TIMEOUT_MS", 15000, minimum=5000, maximum=120000)
-EXTERNAL_TIMEOUT_MS = _env_int("SCRAPER_EXTERNAL_TIMEOUT_MS", 10000, minimum=3000, maximum=60000)
-ABOUT_POST_LOAD_WAIT_MS = _env_int("SCRAPER_ABOUT_POST_LOAD_WAIT_MS", 2000, minimum=0, maximum=15000)
-CONSENT_CLICK_TIMEOUT_MS = _env_int("SCRAPER_CONSENT_CLICK_TIMEOUT_MS", 3000, minimum=500, maximum=20000)
-CONSENT_POST_CLICK_WAIT_MS = _env_int("SCRAPER_CONSENT_POST_CLICK_WAIT_MS", 2000, minimum=0, maximum=15000)
-VIEW_EMAIL_CLICK_TIMEOUT_MS = _env_int("SCRAPER_VIEW_EMAIL_CLICK_TIMEOUT_MS", 3000, minimum=500, maximum=20000)
-VIEW_EMAIL_POST_CLICK_WAIT_MS = _env_int("SCRAPER_VIEW_EMAIL_POST_CLICK_WAIT_MS", 2000, minimum=0, maximum=15000)
-CHANNEL_POST_LOAD_WAIT_MS = _env_int("SCRAPER_CHANNEL_POST_LOAD_WAIT_MS", 1500, minimum=0, maximum=15000)
-EXTERNAL_POST_LOAD_WAIT_MS = _env_int("SCRAPER_EXTERNAL_POST_LOAD_WAIT_MS", 1000, minimum=0, maximum=15000)
-SCRAPER_CONCURRENCY = _env_int("SCRAPER_CONCURRENCY", 5, minimum=1, maximum=20)
 SCRAPER_USER_AGENT = os.getenv(
     "SCRAPER_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -81,11 +58,11 @@ SCRAPER_USER_AGENT = os.getenv(
 ).strip()
 SCRAPER_PROXY_SCHEME = os.getenv("SCRAPER_PROXY_SCHEME", "http").strip() or "http"
 SCRAPER_PROXY_HOST = os.getenv("SCRAPER_PROXY_HOST", "proxy-server.scraperapi.com").strip() or "proxy-server.scraperapi.com"
-SCRAPER_PROXY_PORT = _env_int("SCRAPER_PROXY_PORT", 8001, minimum=1, maximum=65535)
+SCRAPER_PROXY_PORT = int(os.getenv("SCRAPER_PROXY_PORT", "8001"))
 SCRAPER_PROXY_USERNAME = os.getenv("SCRAPER_PROXY_USERNAME", "scraperapi").strip() or "scraperapi"
-DNS_RESOLVE_TIMEOUT_MS = _env_int("SCRAPER_DNS_RESOLVE_TIMEOUT_MS", 750, minimum=100, maximum=5000)
-DNS_CACHE_TTL_SECONDS = _env_int("SCRAPER_DNS_CACHE_TTL_SECONDS", 300, minimum=10, maximum=3600)
-DNS_FAILURE_CACHE_TTL_SECONDS = _env_int("SCRAPER_DNS_FAILURE_CACHE_TTL_SECONDS", 30, minimum=1, maximum=600)
+DNS_RESOLVE_TIMEOUT_MS = int(os.getenv("SCRAPER_DNS_RESOLVE_TIMEOUT_MS", "750"))
+DNS_CACHE_TTL_SECONDS = int(os.getenv("SCRAPER_DNS_CACHE_TTL_SECONDS", "300"))
+DNS_FAILURE_CACHE_TTL_SECONDS = int(os.getenv("SCRAPER_DNS_FAILURE_CACHE_TTL_SECONDS", "30"))
 
 _DNS_SAFETY_CACHE: dict[str, tuple[float, bool]] = {}
 _DNS_SAFETY_CACHE_LOCK = threading.Lock()
