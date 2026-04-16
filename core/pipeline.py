@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from googleapiclient.errors import HttpError
 
 from services.youtube import search_videos, get_video_details, get_channel_details, filter_results
+from services.google_discovery import discover_channels_via_google
 from services.scraper import extract_emails
 from services.excel import generate_excel
 from core.job_manager import get_job, log_to_job
@@ -17,7 +18,8 @@ from core.config import (
     MAX_API_FETCHES,
     MAX_STALE_BATCHES,
     MIN_MATCH_TARGET_ABSOLUTE,
-    MIN_MATCH_TARGET_DIVISOR
+    MIN_MATCH_TARGET_DIVISOR,
+    GOOGLE_DISCOVERY_ENABLED
 )
 
 def run_extraction(job_id: str, req: ExtractionRequest):
@@ -143,6 +145,8 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
                 max_subs,
                 req.region,
                 video_type=req.videoType,
+                search_keyword=current_kw,
+                on_log=lambda m: log_to_job(job_id, m),
             )
 
             new_unique = 0
@@ -172,6 +176,49 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
                 break
         
         log_to_job(job_id, f"Search pipeline finished. Total videos scanned: {videos_searched}/{req.searchPoolSize}. Found {len(results)} potential matches.")
+
+        # Step 4b: Google Dork Discovery (supplemental)
+        if GOOGLE_DISCOVERY_ENABLED:
+            log_to_job(job_id, "Running Google Dork discovery for additional channels...")
+            for kw in keywords:
+                google_results = await asyncio.to_thread(
+                    discover_channels_via_google,
+                    kw,
+                    region=req.region,
+                    on_log=lambda m: log_to_job(job_id, f"  {m}"),
+                )
+                google_new = 0
+                for gr in google_results:
+                    ch_id = gr["channelId"]
+                    if ch_id in seen_channel_ids:
+                        continue
+                    seen_channel_ids.add(ch_id)
+
+                    # If Google snippet already found an email, add directly
+                    row = {
+                        "title": f"[Google Discovery] {ch_id}",
+                        "id": "",
+                        "channelId": ch_id,
+                        "viewCount": 0,
+                        "date": "",
+                        "likes": 0,
+                        "duration": "",
+                        "url": gr["channelUrl"],
+                        "channelName": ch_id,
+                        "channelUrl": gr["channelUrl"],
+                        "numberOfSubscribers": 0,
+                        "Country": req.region,
+                        "channelDescription": gr.get("snippet", ""),
+                        "videoDescription": "",
+                        "EMAIL": gr["emails"][0] if gr["emails"] else "nil",
+                    }
+                    results.append(row)
+                    google_new += 1
+                    if gr["emails"]:
+                        job["emailsFound"] += 1
+
+                if google_new:
+                    log_to_job(job_id, f"  [google] Added {google_new} new channels from Google discovery for '{kw}'.")
 
         if not results:
             log_to_job(job_id, "No channels matched your filter criteria.")

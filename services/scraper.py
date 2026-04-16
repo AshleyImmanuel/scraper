@@ -1,12 +1,12 @@
 """
 Email Scraper - Extracts public emails from YouTube channel About pages
 using Playwright routed through ScraperAPI proxy.
-
-Implements retry logic, request throttling, and external link scraping
-as specified in the PRD.
 """
 import sys
 import asyncio
+import os
+from playwright.async_api import async_playwright
+from playwright_stealth import Stealth
 
 # Windows loop policy enforcement for Playwright
 if sys.platform == "win32":
@@ -16,41 +16,18 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-import re
-import os
-import socket
-import threading
-from urllib.parse import urlparse
-from ipaddress import ip_address
-from time import monotonic
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-from playwright_stealth import Stealth
-import asyncio
 from core.config import (
     SCRAPER_API_KEY,
-    SCRAPER_MAX_RETRIES as MAX_RETRIES,
-    SCRAPER_RETRY_DELAY_MS as RETRY_DELAY_MS,
-    SCRAPER_THROTTLE_MS as THROTTLE_MS,
-    ABOUT_TIMEOUT_MS,
-    CHANNEL_TIMEOUT_MS,
-    EXTERNAL_TIMEOUT_MS,
-    ABOUT_POST_LOAD_WAIT_MS,
-    CONSENT_CLICK_TIMEOUT_MS,
-    CONSENT_POST_CLICK_WAIT_MS,
-    VIEW_EMAIL_CLICK_TIMEOUT_MS,
-    VIEW_EMAIL_POST_CLICK_WAIT_MS,
-    CHANNEL_POST_LOAD_WAIT_MS,
-    EXTERNAL_POST_LOAD_WAIT_MS,
     SCRAPER_CONCURRENCY,
-    SCRAPER_EMAIL_BLACKLIST as BLACKLIST
+    SCRAPER_HEADLESS,
+    FAST_CHECK_VIDEO_COUNT
 )
+from services.utils.extraction import extract_emails_from_text
+from services.scraper_engine import extract_email_from_channel
+from services.youtube import get_recent_videos
+from services.extraction.lightweight_strategy import try_extract_lightweight
 
-# Regex to find email addresses
-EMAIL_REGEX = re.compile(
-    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
-)
-
+# Settings from Environment (with defaults)
 SCRAPER_USER_AGENT = os.getenv(
     "SCRAPER_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -60,85 +37,6 @@ SCRAPER_PROXY_SCHEME = os.getenv("SCRAPER_PROXY_SCHEME", "http").strip() or "htt
 SCRAPER_PROXY_HOST = os.getenv("SCRAPER_PROXY_HOST", "proxy-server.scraperapi.com").strip() or "proxy-server.scraperapi.com"
 SCRAPER_PROXY_PORT = int(os.getenv("SCRAPER_PROXY_PORT", "8001"))
 SCRAPER_PROXY_USERNAME = os.getenv("SCRAPER_PROXY_USERNAME", "scraperapi").strip() or "scraperapi"
-DNS_RESOLVE_TIMEOUT_MS = int(os.getenv("SCRAPER_DNS_RESOLVE_TIMEOUT_MS", "750"))
-DNS_CACHE_TTL_SECONDS = int(os.getenv("SCRAPER_DNS_CACHE_TTL_SECONDS", "300"))
-DNS_FAILURE_CACHE_TTL_SECONDS = int(os.getenv("SCRAPER_DNS_FAILURE_CACHE_TTL_SECONDS", "30"))
-
-_DNS_SAFETY_CACHE: dict[str, tuple[float, bool]] = {}
-_DNS_SAFETY_CACHE_LOCK = threading.Lock()
-_DNS_RESOLVER = ThreadPoolExecutor(max_workers=4, thread_name_prefix="scraper-dns")
-
-
-def _format_exception(exc: Exception, max_len: int = 180) -> str:
-    raw = str(exc).strip()
-    if not raw:
-        return type(exc).__name__
-    if len(raw) > max_len:
-        raw = raw[: max_len - 3] + "..."
-    return f"{type(exc).__name__}: {raw}"
-
-
-def _is_safe_external_url(url: str) -> bool:
-    """Allow only public http(s) URLs for external-link scraping."""
-    try:
-        parsed = urlparse((url or "").strip())
-    except Exception:
-        return False
-
-    if parsed.scheme not in {"http", "https"}:
-        return False
-
-    host = (parsed.hostname or "").strip().lower().rstrip(".")
-    if not host:
-        return False
-
-    if host == "localhost" or host.endswith(".local") or host.endswith(".internal") or host.endswith(".lan"):
-        return False
-
-    try:
-        addr = ip_address(host)
-        return addr.is_global
-    except ValueError:
-        return _is_public_hostname(host)
-
-
-def _is_public_hostname(host: str) -> bool:
-    now = monotonic()
-    with _DNS_SAFETY_CACHE_LOCK:
-        cached = _DNS_SAFETY_CACHE.get(host)
-        if cached and cached[0] > now:
-            return cached[1]
-        if cached:
-            _DNS_SAFETY_CACHE.pop(host, None)
-
-    try:
-        future = _DNS_RESOLVER.submit(_resolve_host_addresses, host)
-        addresses = future.result(timeout=DNS_RESOLVE_TIMEOUT_MS / 1000)
-        is_safe = bool(addresses) and all(ip_address(addr).is_global for addr in addresses)
-        ttl_seconds = DNS_CACHE_TTL_SECONDS if is_safe else DNS_FAILURE_CACHE_TTL_SECONDS
-    except (FutureTimeoutError, OSError, ValueError):
-        is_safe = False
-        ttl_seconds = DNS_FAILURE_CACHE_TTL_SECONDS
-        if "future" in locals():
-            future.cancel()
-
-    with _DNS_SAFETY_CACHE_LOCK:
-        _DNS_SAFETY_CACHE[host] = (now + ttl_seconds, is_safe)
-    return is_safe
-
-
-def _resolve_host_addresses(host: str) -> set[str]:
-    infos = socket.getaddrinfo(
-        host,
-        None,
-        family=socket.AF_UNSPEC,
-        type=socket.SOCK_STREAM,
-    )
-    return {
-        sockaddr[0]
-        for _, _, _, _, sockaddr in infos
-        if sockaddr and sockaddr[0]
-    }
 
 
 def _scraper_api_proxy_url() -> str:
@@ -149,290 +47,131 @@ def _scraper_api_proxy_url() -> str:
     )
 
 
-def _extract_emails_from_text(text: str) -> list[str]:
-    """Find all valid emails in a block of text, filtering blacklisted ones."""
-    found = EMAIL_REGEX.findall(text)
-    return [e for e in found if e.lower() not in BLACKLIST]
-
-
-async def _try_extract_from_about(page, channel_url: str, on_log=None) -> str | None:
-    """
-    Navigate to a YouTube channel's About page and extract the first
-    valid public email from the page content.
-    """
-    # Strategy 1: Visit /about directly (often yields metadata faster)
-    about_url = channel_url.rstrip("/") + "/about"
-    try:
-        if on_log: on_log(f"Visiting about page for {channel_url}...")
-        await page.goto(about_url, wait_until="domcontentloaded", timeout=ABOUT_TIMEOUT_MS)
-        await page.wait_for_timeout(ABOUT_POST_LOAD_WAIT_MS)
-    except Exception as e:
-        if on_log: on_log(f"About subpage redirect failed, trying main page: {str(e)}")
-        await page.goto(channel_url, wait_until="domcontentloaded", timeout=ABOUT_TIMEOUT_MS)
-        await page.wait_for_timeout(ABOUT_POST_LOAD_WAIT_MS)
-
-    if "consent." in page.url.lower():
-        if on_log: on_log(f"CAPTCHA/Consent wall detected for {channel_url}. Attempting to bypass...")
-        try:
-            btn = page.locator('button:has-text("Accept all"), button:has-text("Agree")')
-            if await btn.count() > 0:
-                await btn.first.click(timeout=CONSENT_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(CONSENT_POST_CLICK_WAIT_MS)
-        except Exception:
-            pass
-
-    page_html = await page.content().lower()
-    if "recaptcha" in page_html or "unusual traffic" in page_html:
-        if on_log: on_log(f"WARNING: Google reCAPTCHA blocked access for {channel_url}.")
-        # Yield to let it try fallback external links, but about page is definitely dead.
-
-    # Strategy 2: Expand the '...more' popup and check for View email address
-    try:
-        # Improved selectors for the "more" button which opens the modal
-        more_selectors = [
-            'button.ytTruncatedTextAbsoluteButton', 
-            'button[aria-label*="tap for more"]',
-            '.yt-description-preview-view-model-anchor',
-            '#description-container',
-            '#description'
-        ]
-        
-        opened = False
-        for sel in more_selectors:
-            more_link = page.locator(sel)
-            if await more_link.count() > 0:
-                await more_link.first.click(timeout=CONSENT_CLICK_TIMEOUT_MS)
-                await page.wait_for_timeout(ABOUT_POST_LOAD_WAIT_MS)
-                opened = True
-                break
-        
-        if opened:
-            # Look for the email button inside the opened dialog
-            dialog = page.locator('ytd-about-channel-view-model, tp-yt-paper-dialog, #dialog')
-            if await dialog.count() > 0:
-                # Check for "Sign in to see email address"
-                dialog_text = await dialog.inner_text()
-                if "sign in" in dialog_text.lower():
-                    if on_log: on_log("  [scraper] Sign-in required for official email button.")
-                
-                btn = dialog.locator('button:has-text("View email address"), #view-email-button')
-                if await btn.count() > 0:
-                    await btn.first.click(timeout=VIEW_EMAIL_CLICK_TIMEOUT_MS)
-                    await page.wait_for_timeout(VIEW_EMAIL_POST_CLICK_WAIT_MS)
-                    
-                    # Check for reCAPTCHA which often appears right after clicking
-                    modal_html = await dialog.inner_html()
-                    if "recaptcha" in modal_html.lower() or "g-recaptcha" in modal_html.lower():
-                        if on_log: on_log("  [scraper] reCAPTCHA block detected after clicking View Email.")
-    except Exception as e:
-        if on_log: on_log(f"Could not interact with 'More info' dialog: {str(e)}")
-
-    page_text = await page.inner_text("body")
-    valid = _extract_emails_from_text(page_text)
-    if valid:
-        return valid[0]
-
-    html = await page.content()
-    valid = _extract_emails_from_text(html)
-    if valid:
-        return valid[0]
-
-    return None
-
-
-async def _try_extract_from_links(page, channel_url: str) -> str | None:
-    """
-    Navigate to the channel page and follow external links (website, social)
-    to find emails on linked pages - as required by the PRD.
-    """
-    await page.goto(channel_url, wait_until="domcontentloaded", timeout=CHANNEL_TIMEOUT_MS)
-    await page.wait_for_timeout(CHANNEL_POST_LOAD_WAIT_MS)
-
-    # Gather all external links from the channel page
-    links = await page.eval_on_selector_all(
-        'a[href*="redirect"]',
-        "els => els.map(el => el.href)"
-    )
-    # Also check direct external links
-    all_links = await page.eval_on_selector_all(
-        'a[href^="http"]',
-        "els => els.map(el => el.href)"
-    )
-    links.extend(all_links)
-
-    # Filter to only external and safe links
-    external = []
-    seen_links = set()
-    for link in links:
-        lower = link.lower()
-        is_external_candidate = ("youtube.com" not in lower and "google.com" not in lower) or ("redirect" in lower)
-        if not is_external_candidate:
-            continue
-        if link in seen_links:
-            continue
-        if not _is_safe_external_url(link):
-            continue
-        seen_links.add(link)
-        external.append(link)
-
-    # Visit up to 3 external links to look for emails
-    for ext_url in external[:3]:
-        try:
-            await page.goto(ext_url, wait_until="domcontentloaded", timeout=EXTERNAL_TIMEOUT_MS)
-            await page.wait_for_timeout(EXTERNAL_POST_LOAD_WAIT_MS)
-            text = await page.inner_text("body")
-            valid = _extract_emails_from_text(text)
-            if valid:
-                return valid[0]
-        except Exception:
-            continue
-
-    return None
-
-
-async def _extract_email_from_channel(page, channel_url: str, on_log=None) -> str | None:
-    """
-    Full email extraction pipeline for a single channel with retry logic.
-    Tries About page first, then follows external links if no email found.
-    """
-    for attempt in range(1, MAX_RETRIES + 1):
-        had_error = False
-
-        # Try About page first
-        try:
-            email = await _try_extract_from_about(page, channel_url, on_log)
-            if email:
-                return email
-        except PlaywrightTimeoutError as exc:
-            had_error = True
-            if on_log:
-                on_log(
-                    f"Attempt {attempt}/{MAX_RETRIES} about-page timeout for {channel_url}: "
-                    f"{_format_exception(exc)}"
-                )
-        except Exception as exc:
-            had_error = True
-            if on_log:
-                on_log(
-                    f"Attempt {attempt}/{MAX_RETRIES} about-page error for {channel_url}: "
-                    f"{_format_exception(exc)}"
-                )
-
-        # Fallback: check external links from the channel page
-        try:
-            email = await _try_extract_from_links(page, channel_url)
-            if email:
-                return email
-        except PlaywrightTimeoutError as exc:
-            had_error = True
-            if on_log:
-                on_log(
-                    f"Attempt {attempt}/{MAX_RETRIES} links timeout for {channel_url}: "
-                    f"{_format_exception(exc)}"
-                )
-        except Exception as exc:
-            had_error = True
-            if on_log:
-                on_log(
-                    f"Attempt {attempt}/{MAX_RETRIES} links error for {channel_url}: "
-                    f"{_format_exception(exc)}"
-                )
-
-        # No email and no hard errors means this channel likely has no public contact email.
-        if not had_error:
-            return None
-
-        if attempt < MAX_RETRIES:
-            await asyncio.sleep(RETRY_DELAY_MS / 1000)
-        else:
-            if on_log:
-                on_log(f"All retries exhausted for {channel_url}. Skipping.")
-            return None
-
-
 async def extract_emails(results: list[dict], on_progress=None, on_log=None) -> list[dict]:
+    """
+    Main extraction pipeline:
+    1. YT Descriptions (Last 20 videos via API)
+    2. Lightweight External Links (Requests/BS4)
+    3. Aggregators & Homepages (Requests/BS4)
+    4. YT About Modal (Playwright fallback)
+    """
     total = len(results)
     pending_rows: list[tuple[int, dict]] = []
 
+    if on_log: on_log(f"Starting Multi-Source extraction for {total} candidates...")
+    
     for idx, row in enumerate(results):
         channel_name = row["channelName"]
-        existing_email = str(row.get("EMAIL", "")).strip()
-        if existing_email and existing_email.lower() != "nil":
-            if on_progress:
-                on_progress(idx + 1, total, channel_name, existing_email)
-            continue
-
-        desc = row.get("channelDescription", "")
-        fast_check = _extract_emails_from_text(desc) if desc else []
+        channel_id = row["channelId"]
+        
+        # --- TIER 1: YouTube API (Search Snippets + Full Desc) ---
+        full_context = f"{row.get('channelDescription','')} {row.get('videoDescription','')}"
+        fast_check = extract_emails_from_text(full_context)
         if fast_check:
             row["EMAIL"] = fast_check[0]
-            if on_progress:
-                on_progress(idx + 1, total, channel_name, fast_check[0])
+            if on_progress: on_progress(idx + 1, total, channel_name, fast_check[0])
             continue
 
+        # --- TIER 2: YouTube API (Recent Video Descriptions) ---
+        if FAST_CHECK_VIDEO_COUNT > 0:
+            recent_vids = await asyncio.to_thread(get_recent_videos, channel_id, FAST_CHECK_VIDEO_COUNT)
+            all_vids_text = ""
+            for vid in recent_vids:
+                all_vids_text += f" {vid['title']} {vid['description']}"
+            
+            v_emails = extract_emails_from_text(all_vids_text)
+            if v_emails:
+                row["EMAIL"] = v_emails[0]
+                if on_log: on_log(f"  [api] SUCCESS: Found in video descriptions for {channel_name}")
+                if on_progress: on_progress(idx + 1, total, channel_name, v_emails[0])
+                continue
+
+        # --- TIER 3: Lightweight External Links (Requests/BS4) ---
+        # 1. Gather links from the channel page (we need to hit once to get the links)
+        # Note: We still use Playwright for the initial link gathering to be 100% accurate with YT's JS redirects
+        # BUT we prioritize this over the "View Email" button.
         pending_rows.append((idx, row))
 
     if not pending_rows:
-        if on_log:
-            on_log("No browser scraping required; all emails resolved from metadata.")
         return results
 
-    proxy_url = _scraper_api_proxy_url()
+    proxy_settings = {
+        "server": f"{SCRAPER_PROXY_SCHEME}://{SCRAPER_PROXY_HOST}:{SCRAPER_PROXY_PORT}",
+        "username": SCRAPER_PROXY_USERNAME,
+        "password": SCRAPER_API_KEY
+    }
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=True,
-            proxy={"server": proxy_url} if SCRAPER_API_KEY else None,
-        )
+        # Pre-check: Is ScraperAPI alive?
+        is_sapi_dead = False
+        try:
+            browser_test = await pw.chromium.launch(headless=True, proxy=proxy_settings)
+            test_context = await browser_test.new_context()
+            test_page = await test_context.new_page()
+            resp = await test_page.goto("http://httpbin.org/ip", timeout=10000)
+            if resp.status == 403: is_sapi_dead = True
+            await browser_test.close()
+        except Exception: pass
 
-        sem = asyncio.Semaphore(SCRAPER_CONCURRENCY)
+        browser = await pw.chromium.launch(headless=SCRAPER_HEADLESS, proxy=proxy_settings)
         context = await browser.new_context(
             user_agent=SCRAPER_USER_AGENT,
             viewport={"width": 1280, "height": 720},
-            ignore_https_errors=True,
+            ignore_https_errors=True
         )
+        
+        await context.route("**/*", lambda route: route.abort() if route.request.resource_type in {"image", "media", "font"} else route.continue_())
+        sem = asyncio.Semaphore(SCRAPER_CONCURRENCY)
 
-        async def _route_non_critical(route):
-            # Reduce bandwidth and page-load pressure through proxy.
-            if route.request.resource_type in {"image", "media", "font"}:
-                await route.abort()
-                return
-            await route.continue_()
-
-        await context.route("**/*", _route_non_critical)
-
-        async def process_channel(idx: int, row: dict):
-            channel_url = row["channelUrl"]
-            channel_name = row["channelName"]
-
+        async def process_channel(original_idx, row):
             async with sem:
-                if on_log:
-                    on_log(f"Testing browser extraction for: {channel_name}...")
                 page = await context.new_page()
                 await Stealth().apply_stealth_async(page)
                 try:
-                    if THROTTLE_MS > 0:
-                        await page.wait_for_timeout(THROTTLE_MS)
-                    email = await _extract_email_from_channel(page, channel_url, on_log)
-                    row["EMAIL"] = email or "nil"
-                    if on_progress:
-                        on_progress(idx + 1, total, channel_name, email)
+                    # Step 1: Visit channel and get links
+                    if on_log: on_log(f"Analyzing {row['channelName']}...")
+                    await page.goto(row["channelUrl"], wait_until="commit", timeout=30000)
+                    await page.wait_for_timeout(2000)
+                    
+                    # Gather links
+                    raw_links = await page.eval_on_selector_all('a[href]', "els => els.map(el => el.href)")
+                    links = []
+                    for l in raw_links:
+                        if "youtube.com/redirect" in l:
+                            from urllib.parse import urlparse, parse_qs
+                            try: links.append(parse_qs(urlparse(l).query).get("q", [""])[0])
+                            except Exception: links.append(l)
+                        else: links.append(l)
+
+                    # --- TIER 3: Lightweight Scan of Links ---
+                    found_email = None
+                    for l in links:
+                        if "youtube.com" in l or "google.com" in l: continue
+                        # Use ThreadPool to running the synchronous lightweight scraper
+                        found_email = await asyncio.to_thread(try_extract_lightweight, l, on_log=on_log)
+                        if found_email: break
+                    
+                    if found_email:
+                        row["EMAIL"] = found_email
+                        if on_progress: on_progress(original_idx + 1, total, row["channelName"], found_email)
+                        return
+
+                    # --- TIER 4: About Modal Fallback (Only if ScraperAPI is up) ---
+                    if not is_sapi_dead:
+                        email = await extract_email_from_channel(page, row["channelUrl"], on_log)
+                        row["EMAIL"] = email or "nil"
+                    else:
+                        row["EMAIL"] = "nil"
+                    
+                    if on_progress: on_progress(original_idx + 1, total, row["channelName"], row["EMAIL"] if row["EMAIL"] != "nil" else None)
+                except Exception as e:
+                    if on_log: on_log(f"  [error] {row['channelName']}: {str(e)[:50]}")
+                    row["EMAIL"] = "nil"
                 finally:
                     await page.close()
 
         tasks = [process_channel(idx, row) for idx, row in pending_rows]
-        task_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for i, task_result in enumerate(task_results):
-            if not isinstance(task_result, Exception):
-                continue
-            failed_idx, failed_row = pending_rows[i]
-            failed_name = failed_row.get("channelName", "unknown-channel")
-            failed_row["EMAIL"] = "nil"
-            if on_log:
-                on_log(f"Channel scrape failed for {failed_name}: {type(task_result).__name__}")
-            if on_progress:
-                on_progress(failed_idx + 1, total, failed_name, None)
+        await asyncio.gather(*tasks)
 
         await context.close()
         await browser.close()

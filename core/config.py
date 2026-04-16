@@ -48,16 +48,53 @@ TRUSTED_PROXY_IPS = {
 }
 
 # ---- YouTube API Settings ----
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+_MAIN_YT_KEY = os.getenv("YOUTUBE_API_KEY", "")
+_TEST_YT_KEY = os.getenv("YOUTUBE_API_KEY_TEST", "")
+TEST_MODE = _env_flag("TEST_MODE", default=False)
+
+YOUTUBE_API_KEY = _TEST_YT_KEY if (TEST_MODE and _TEST_YT_KEY) else _MAIN_YT_KEY
+
 YOUTUBE_DEFAULT_REGION = os.getenv("YOUTUBE_DEFAULT_REGION", "US").strip().upper() or "US"
 YOUTUBE_RELEVANCE_LANGUAGE = os.getenv("YOUTUBE_RELEVANCE_LANGUAGE", "en").strip() or "en"
 
-# Exclusion Keywords (For filtering edits/montages)
+# Exclusion Keywords (For filtering edits, montages, gaming, music, AI, tutorials, and aesthetic junk)
 YOUTUBE_EXCLUSION_KEYWORDS = _env_csv(
     "YOUTUBE_EXCLUSION_KEYWORDS", 
-    "montage,edit,amv,gmv,phonk,tribute,status,alight motion,capcut,velocity,lyrics,ffx",
+    "montage,edit,amv,gmv,phonk,tribute,status,alight motion,capcut,velocity,lyrics,ffx,"
+    "gaming,gameplay,playthrough,walkthrough,"
+    "music video,official video,song,mv,remix,mix,ncs,non-copyright,audio,vocal,instrumental,"
+    "ai,stable diffusion,midjourney,dalle,"
+    "tutorial,how to,course,lesson,"
+    "aesthetic,vibe,mood,slowed,reverb,lofi,nightcore,relaxing,bass boosted,"
+    "animeedit,amvs,gmvs,tiktok,reels,shorts,compilation,reaction,instagram,"
+    "socks,feet,cosplay,best of,fan page,fan account,re-edit,repurposed,clips,moments,highlights",
     convert_to_upper=True
 )
+
+# Channel-specific exclusions (to avoid fan-run clip channels or repurposers)
+YOUTUBE_CHANNEL_EXCLUSION_KEYWORDS = _env_csv(
+    "YOUTUBE_CHANNEL_EXCLUSION_KEYWORDS",
+    "CLIPS,HIGHLIGHTS,MOMENTS,THE VAULT,VAULT,BEST OF,FAN PAGE,FAN ACCOUNT,RE-EDIT,REPURPOSED,SHORTS",
+    convert_to_upper=True
+)
+
+# Priority Keywords (bypass strict exclusions if matched)
+YOUTUBE_PRIORITY_KEYWORDS = _env_csv(
+    "YOUTUBE_PRIORITY_KEYWORDS",
+    "PODCAST,INTERVIEW,EPISODE,SHOW,MEDIA,PRODUCTIONS,OFFICIAL,CHANNEL,BUSINESS,CONTACT",
+    convert_to_upper=True
+)
+
+# Authority Keywords (for triggering stricter duration requirements)
+YOUTUBE_AUTHORITY_KEYWORDS = _env_csv(
+    "YOUTUBE_AUTHORITY_KEYWORDS",
+    "PODCAST,INTERVIEW,EPISODE,SHOW,LECTURE,CONFERENCE,KEYNOTE,DOCUMENTARY",
+    convert_to_upper=True
+)
+
+# Duration Thresholds (Seconds)
+YOUTUBE_AUTHORITY_MIN_DURATION = _env_int("YOUTUBE_AUTHORITY_MIN_DURATION", 600, minimum=0)
+YOUTUBE_LONG_MIN_DURATION = _env_int("YOUTUBE_LONG_MIN_DURATION", 60, minimum=0)
 
 # Region/Country Mapping
 # Format: KEY:VALUE,KEY:VALUE
@@ -87,23 +124,50 @@ SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 SCRAPER_MAX_RETRIES = _env_int("SCRAPER_MAX_RETRIES", 2, minimum=1, maximum=6)
 SCRAPER_RETRY_DELAY_MS = _env_int("SCRAPER_RETRY_DELAY_MS", 2000, minimum=250, maximum=60000)
 SCRAPER_CONCURRENCY = _env_int("SCRAPER_CONCURRENCY", 5, minimum=1, maximum=20)
+SCRAPER_HEADLESS = _env_flag("SCRAPER_HEADLESS", default=True)
+SCRAPER_MOBILE_FALLBACK = _env_flag("SCRAPER_MOBILE_FALLBACK", default=True)
+SCRAPER_MOUSE_JITTER = _env_flag("SCRAPER_MOUSE_JITTER", default=True)
+SCRAPER_COOKIES_PATH = os.getenv("SCRAPER_COOKIES_PATH", "youtube_session_cookies.json")
+SCRAPER_CAPTCHA_API_KEY = os.getenv("SCRAPER_CAPTCHA_API_KEY", "")
+SCRAPER_CAPTCHA_SERVICE = os.getenv("SCRAPER_CAPTCHA_SERVICE", "2captcha") # 2captcha or anti-captcha
 SCRAPER_EMAIL_BLACKLIST = _env_csv_set(
     "SCRAPER_EMAIL_BLACKLIST",
     "noreply@youtube.com,support@google.com,press@youtube.com,example@example.com,name@example.com,email@example.com,copyright@youtube.com,legal@google.com,abuse@youtube.com"
 )
 
+# External Scraper Settings
+SCRAPER_LINK_AGGREGATORS = _env_csv(
+    "SCRAPER_LINK_AGGREGATORS",
+    "linktr.ee,bio.link,campsite.bio,tap.link,lnk.bio,beacons.ai,solo.to,allmylinks.com,direct.me,linkpop.com,taplink.at,msha.ke,shor.by,biolinky.co,instabio.cc,stan.store",
+    convert_to_upper=False
+)
+SCRAPER_CONTACT_SUBPATHS = _env_csv(
+    "SCRAPER_CONTACT_SUBPATHS",
+    "/contact,/about,/contact-us,/contactus,/contact-me,/reach-me,/info,/support,/imprint,/impressum,/legal,/management,/business,/partnership,/collab,/collaboration",
+    convert_to_upper=False
+)
+SCRAPER_PROSE_TLDS = _env_csv_set(
+    "SCRAPER_PROSE_TLDS",
+    "this,that,some,every,now,here,there,all,the,with,from,for,only,well,more,like,just,very"
+)
+SCRAPER_JUNK_INDICATORS = _env_csv(
+    "SCRAPER_JUNK_INDICATORS",
+    "window.,loc@ion,p@reon,patreon.com,substack.com,instagram.com,facebook.com,twitter.com,linkedin.com,tiktok.com,href=,location.,javascript:,onclick,onload,.location,.href,ion.href,script,document.,@media,@font-face,@charset,@import",
+    convert_to_upper=False
+)
+
 # ---- Timeouts & Wait Times ----
 SCRAPER_THROTTLE_MS = _env_int("SCRAPER_THROTTLE_MS", 0, minimum=0, maximum=15000)
-ABOUT_TIMEOUT_MS = _env_int("SCRAPER_ABOUT_TIMEOUT_MS", 20000, minimum=5000, maximum=120000)
-CHANNEL_TIMEOUT_MS = _env_int("SCRAPER_CHANNEL_TIMEOUT_MS", 15000, minimum=5000, maximum=120000)
-EXTERNAL_TIMEOUT_MS = _env_int("SCRAPER_EXTERNAL_TIMEOUT_MS", 10000, minimum=3000, maximum=60000)
+ABOUT_TIMEOUT_MS = _env_int("SCRAPER_ABOUT_TIMEOUT_MS", 60000, minimum=5000, maximum=120000)
+CHANNEL_TIMEOUT_MS = _env_int("SCRAPER_CHANNEL_TIMEOUT_MS", 60000, minimum=5000, maximum=120000)
+EXTERNAL_TIMEOUT_MS = _env_int("SCRAPER_EXTERNAL_TIMEOUT_MS", 20000, minimum=3000, maximum=60000)
 ABOUT_POST_LOAD_WAIT_MS = _env_int("SCRAPER_ABOUT_POST_LOAD_WAIT_MS", 2000, minimum=0, maximum=15000)
 CONSENT_CLICK_TIMEOUT_MS = _env_int("SCRAPER_CONSENT_CLICK_TIMEOUT_MS", 3000, minimum=500, maximum=20000)
 CONSENT_POST_CLICK_WAIT_MS = _env_int("SCRAPER_CONSENT_POST_CLICK_WAIT_MS", 2000, minimum=0, maximum=15000)
 VIEW_EMAIL_CLICK_TIMEOUT_MS = _env_int("SCRAPER_VIEW_EMAIL_CLICK_TIMEOUT_MS", 3000, minimum=500, maximum=20000)
 VIEW_EMAIL_POST_CLICK_WAIT_MS = _env_int("SCRAPER_VIEW_EMAIL_POST_CLICK_WAIT_MS", 2000, minimum=0, maximum=15000)
-CHANNEL_POST_LOAD_WAIT_MS = _env_int("SCRAPER_CHANNEL_POST_LOAD_WAIT_MS", 1500, minimum=0, maximum=15000)
-EXTERNAL_POST_LOAD_WAIT_MS = _env_int("SCRAPER_EXTERNAL_POST_LOAD_WAIT_MS", 1000, minimum=0, maximum=15000)
+CHANNEL_POST_LOAD_WAIT_MS = _env_int("SCRAPER_CHANNEL_POST_LOAD_WAIT_MS", 2000, minimum=0, maximum=15000)
+EXTERNAL_POST_LOAD_WAIT_MS = _env_int("SCRAPER_EXTERNAL_POST_LOAD_WAIT_MS", 2000, minimum=0, maximum=15000)
 
 # ---- Extraction Job Constraints ----
 MAX_EXTRACT_BODY_BYTES = _env_int("MAX_EXTRACT_BODY_BYTES", 10000, minimum=1000)
@@ -116,6 +180,22 @@ MAX_API_FETCHES = _env_int("MAX_API_FETCHES", 100, minimum=1, maximum=500)
 MAX_STALE_BATCHES = _env_int("MAX_STALE_BATCHES", 8, minimum=1, maximum=100)
 MIN_MATCH_TARGET_ABSOLUTE = _env_int("MIN_MATCH_TARGET_ABSOLUTE", 20, minimum=1)
 MIN_MATCH_TARGET_DIVISOR = _env_int("MIN_MATCH_TARGET_DIVISOR", 10, minimum=1)
+
+# NEW: Deep Scan Settings
+DEEP_SCAN_LIMIT = _env_int("DEEP_SCAN_LIMIT", 15, minimum=1, maximum=50)
+RECURSIVE_EXTERNAL_SCAN = _env_flag("RECURSIVE_EXTERNAL_SCAN", default=True)
+FAST_CHECK_VIDEO_COUNT = _env_int("FAST_CHECK_VIDEO_COUNT", 10, minimum=1, maximum=50)
+
+# ---- Google Dork Discovery ----
+# Uses ScraperAPI credits to search Google for YouTube channels mentioning emails.
+GOOGLE_DISCOVERY_ENABLED = _env_flag("GOOGLE_DISCOVERY_ENABLED", default=False)
+GOOGLE_DISCOVERY_MAX_PAGES = _env_int("GOOGLE_DISCOVERY_MAX_PAGES", 3, minimum=1, maximum=10)
+GOOGLE_DISCOVERY_QUERIES = _env_csv(
+    "GOOGLE_DISCOVERY_QUERIES",
+    'site:youtube.com "{keyword}" "email" OR "contact" OR "business inquiries",'
+    'site:youtube.com/@* "{keyword}" email',
+    convert_to_upper=False
+)
 
 # ---- Rate Limiting Settings ----
 RATE_LIMIT_CLEANUP_INTERVAL_SECONDS = _env_int("RATE_LIMIT_CLEANUP_INTERVAL_SECONDS", 30, minimum=5)

@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timezone
 from core.config import JOB_RETENTION_SECONDS, MAX_STORED_JOBS, MAX_JOB_LOG_LINES
 

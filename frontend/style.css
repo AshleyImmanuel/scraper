@@ -208,3 +208,168 @@ select { width: 100%; appearance: none; -webkit-appearance: none; }
     .form-panel { padding: 1.5rem; }
     .toast-stack { top: auto; bottom: 14px; right: 12px; left: 12px; width: auto; }
 }
+
+/* Keyword Area Styles */
+.keyword-area { display: flex; flex-direction: column; gap: 10px; margin-bottom: 2rem; }
+.keyword-header { display: flex; justify-content: space-between; align-items: center; }
+.item-count { font-size: 0.8rem; color: var(--text-muted); font-weight: 500; }
+.info-icon { opacity: 0.4; cursor: help; margin-left: 4px; }
+
+.keyword-box {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.keyword-list {
+    max-height: 420px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-right: 4px;
+}
+.keyword-list::-webkit-scrollbar { width: 5px; }
+.keyword-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+
+.keyword-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    animation: slideIn 0.3s ease;
+}
+@keyframes slideIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+.row-index {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    min-width: 24px;
+    text-align: center;
+    opacity: 0.7;
+}
+.keyword-row input {
+    flex: 1;
+    padding: 10px 14px;
+    font-size: 0.95rem;
+    border-radius: 10px;
+}
+.delete-row {
+    background: transparent;
+    border: 1px solid rgba(255, 82, 82, 0.2);
+    color: #ff5252;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+.delete-row:hover {
+    background: rgba(255, 82, 82, 0.1);
+    border-color: #ff5252;
+}
+
+.keyword-footer {
+    display: flex;
+    gap: 12px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+.footer-btn {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+.footer-btn:hover {
+    background: rgba(255,255,255,0.04);
+    color: var(--text-main);
+    border-color: rgba(255,255,255,0.15);
+}
+
+/* Modal Styles */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    animation: fadeIn 0.2s ease;
+}
+.modal-content {
+    background: #121216;
+    border: 1px solid rgba(255,255,255,0.1);
+    width: 100%;
+    max-width: 500px;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 30px 60px rgba(0,0,0,0.5);
+}
+.modal-header {
+    padding: 20px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.modal-header h2 { font-size: 1.25rem; font-weight: 600; }
+.close-modal {
+    background: transparent; border: none; color: var(--text-muted);
+    font-size: 1.5rem; cursor: pointer;
+}
+.modal-body { padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+.modal-subtitle { font-size: 0.9rem; color: var(--text-muted); }
+.modal-meta { font-size: 0.85rem; color: var(--text-main); font-weight: 500; }
+#bulkTextarea {
+    width: 100%;
+    height: 300px;
+    background: #0a0a0c;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    color: var(--text-main);
+    padding: 16px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: none;
+    outline: none;
+}
+#bulkTextarea:focus { border-color: #3b82f6; }
+
+.modal-footer {
+    padding: 16px 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.2);
+}
+.modal-btn {
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.modal-btn.cancel { background: transparent; border: none; color: var(--text-main); }
+.modal-btn.cancel:hover { background: rgba(255,255,255,0.05); }
+.modal-btn.set {
+    background: #3b82f6; border: none; color: white;
+    padding: 10px 24px;
+}
+.modal-btn.set:hover { background: #2563eb; transform: translateY(-1px); }

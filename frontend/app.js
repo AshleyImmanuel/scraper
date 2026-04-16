@@ -17,12 +17,29 @@ document.addEventListener('DOMContentLoaded', () => {
     let pollInFlight = false;
     let currentJobId = null;
     let lastPollErrorToastAt = 0;
+    let keywords = ['']; // Initialize with one empty keyword
+
+    // UI Elements for Keyword Management
+    const keywordList = document.getElementById('keywordList');
+    const itemCount = document.getElementById('itemCount');
+    const addRowBtn = document.getElementById('addKeywordRow');
+    const openBulkBtn = document.getElementById('openBulkEdit');
+    const bulkModal = document.getElementById('bulkModal');
+    const closeBulkBtn = document.getElementById('closeBulkModal');
+    const cancelBulkBtn = document.getElementById('cancelBulk');
+    const setBulkBtn = document.getElementById('setBulk');
+    const bulkTextarea = document.getElementById('bulkTextarea');
+    const bulkCountDisp = document.getElementById('bulkCount');
+    const hiddenKeywordInput = document.getElementById('keyword');
+
+    // Initial Render
+    renderKeywordRows();
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
 
         const payload = {
-            keyword: document.getElementById('keyword').value,
+            keyword: keywords.filter(k => k.trim()).join(', '),
             minViews: parseInt(document.getElementById('minViews').value) || 0,
             maxViews: parseInt(document.getElementById('maxViews').value) || 0,
             minSubs: parseInt(document.getElementById('minSubs').value) || 0,
@@ -291,5 +308,108 @@ document.addEventListener('DOMContentLoaded', () => {
             toast.classList.add('is-hiding');
             setTimeout(() => toast.remove(), 280);
         }, 3800);
+    }
+
+    // --- Dynamic Keyword List Logic ---
+
+    function renderKeywordRows() {
+        keywordList.innerHTML = '';
+        keywords.forEach((val, index) => {
+            const row = document.createElement('div');
+            row.className = 'keyword-row';
+            row.innerHTML = `
+                <span class="row-index">${index + 1}</span>
+                <input type="text" placeholder="Enter keyword..." value="${escapeHtml(val)}" data-index="${index}">
+                <button type="button" class="delete-row" data-index="${index}" title="Remove">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            `;
+            keywordList.appendChild(row);
+
+            // Row events
+            const input = row.querySelector('input');
+            input.addEventListener('input', (e) => {
+                keywords[index] = e.target.value;
+                updateHiddenInput();
+            });
+
+            const delBtn = row.querySelector('.delete-row');
+            delBtn.addEventListener('click', () => {
+                if (keywords.length > 1) {
+                    keywords.splice(index, 1);
+                    renderKeywordRows();
+                    updateHiddenInput();
+                } else {
+                    keywords[0] = '';
+                    renderKeywordRows();
+                    updateHiddenInput();
+                }
+            });
+        });
+        updateItemCount();
+    }
+
+    function updateItemCount() {
+        const count = keywords.length;
+        itemCount.textContent = `${count} item${count !== 1 ? 's' : ''}`;
+    }
+
+    function updateHiddenInput() {
+        const val = keywords.filter(k => k.trim()).join(', ');
+        hiddenKeywordInput.value = val;
+    }
+
+    addRowBtn.addEventListener('click', () => {
+        keywords.push('');
+        renderKeywordRows();
+        // Focus the new input
+        const inputs = keywordList.querySelectorAll('input');
+        inputs[inputs.length - 1].focus();
+    });
+
+    // --- Bulk Edit Modal Logic ---
+
+    openBulkBtn.addEventListener('click', () => {
+        bulkTextarea.value = keywords.filter(k => k.trim()).join('\n');
+        updateBulkCount();
+        bulkModal.classList.remove('hidden');
+        bulkTextarea.focus();
+    });
+
+    function closeBulk() {
+        bulkModal.classList.add('hidden');
+    }
+
+    closeBulkBtn.addEventListener('click', closeBulk);
+    cancelBulkBtn.addEventListener('click', closeBulk);
+    
+    // Close on click outside
+    bulkModal.addEventListener('click', (e) => {
+        if (e.target === bulkModal) closeBulk();
+    });
+
+    bulkTextarea.addEventListener('input', updateBulkCount);
+
+    function updateBulkCount() {
+        const lines = bulkTextarea.value.split('\n').filter(l => l.trim()).length;
+        bulkCountDisp.textContent = `${lines} item${lines !== 1 ? 's' : ''}`;
+    }
+
+    setBulkBtn.addEventListener('click', () => {
+        const lines = bulkTextarea.value.split('\n').map(l => l.trim()).filter(l => l !== '');
+        if (lines.length > 0) {
+            keywords = lines;
+        } else {
+            keywords = [''];
+        }
+        renderKeywordRows();
+        updateHiddenInput();
+        closeBulk();
+    });
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 });

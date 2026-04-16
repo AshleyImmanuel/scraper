@@ -26,14 +26,32 @@
                 <h1>YT LeadMiner</h1>
             </div>
             <p class="subtitle">High-precision lead generation targeted at top YouTube creators.</p>
-        </header>
+        </header>        
 
         <section class="form-panel">
             <form id="lead-form">
                 <div class="form-row">
-                    <div class="form-group full-width">
-                        <label for="keyword">Target Keyword(s) <small style="color: rgba(255,255,255,0.4); float: right;">Comma-separated for multiple</small></label>
-                        <input type="text" id="keyword" name="keyword" placeholder="e.g. Gaming Laptop, PC Build" required>
+                    <div class="keyword-area">
+                        <div class="keyword-header">
+                            <label>Search Terms <span class="info-icon" title="Each search term will be processed individually">ⓘ</span></label>
+                            <span class="item-count" id="itemCount">0 items</span>
+                        </div>
+                        <div class="keyword-box">
+                            <div id="keywordList" class="keyword-list">
+                                <!-- Dynamic rows -->
+                            </div>
+                            <div class="keyword-footer">
+                                <button type="button" class="footer-btn" id="addKeywordRow">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                                    Add Item
+                                </button>
+                                <button type="button" class="footer-btn" id="openBulkEdit">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                    Bulk Edit
+                                </button>
+                            </div>
+                        </div>
+                        <input type="hidden" id="keyword" name="keyword" required>
                     </div>
                 </div>
 
@@ -148,6 +166,26 @@
             </div>
         </section>
     </main>
+    <div id="bulkModal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Bulk edit</h2>
+                <button type="button" class="close-modal" id="closeBulkModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-subtitle">Paste items separated by new line.</p>
+                <div class="modal-meta">
+                    <span id="bulkCount">0 items</span>
+                </div>
+                <textarea id="bulkTextarea" placeholder="Podcast&#10;podcast interview&#10;business podcast..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="modal-btn cancel" id="cancelBulk">Cancel</button>
+                <button type="button" class="modal-btn set" id="setBulk">Set</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/app.js?v=7"></script>
 </body>
 </html>
