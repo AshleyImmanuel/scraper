@@ -230,7 +230,8 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
 
         # Step 5: Scrape emails
         job["total"] = len(results)
-        log_to_job(job_id, f"Launching Playwright browser - scraping emails from {len(results)} channels...")
+        log_to_job(job_id, f"Scraping emails from {len(results)} channels using lightweight HTTP requests...")
+
 
         def on_progress(current, total, name, email):
             job["progress"] = current

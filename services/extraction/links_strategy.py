@@ -148,3 +148,72 @@ def _get_url_priority(url: str) -> int:
     if urlparse(url).path in ["", "/"]: return 10
     return 100
 
+async def scan_heavy_links(page, heavy_links: list[str], on_log=None) -> str | None:
+    """
+    Directly deep scan a provided list of heavy links (aggregators/social) 
+    using Playwright to bypass JS requirements.
+    """
+    external_queue = deque()
+    seen_urls = set()
+    
+    for link in heavy_links:
+        if link not in seen_urls and is_safe_external_url(link):
+            seen_urls.add(link)
+            external_queue.append((link, 1))
+
+    if not external_queue:
+        return None
+
+    sorted_targets = sorted(list(external_queue), key=lambda x: _get_url_priority(x[0]))
+    external_queue = deque(sorted_targets)
+    scanned_count = 0
+    
+    while external_queue and scanned_count < DEEP_SCAN_LIMIT:
+        target_url, depth = external_queue.popleft()
+        try:
+            if on_log: on_log(f"  [heavy_links] Playwright scanning (L{depth}): {target_url}")
+            await page.goto(target_url, wait_until="domcontentloaded", timeout=EXTERNAL_TIMEOUT_MS)
+            await page.wait_for_timeout(EXTERNAL_POST_LOAD_WAIT_MS)
+            scanned_count += 1
+            
+            html_content = await page.content()
+            found_emails = extract_emails_from_text(html_content)
+            if found_emails:
+                if on_log: on_log(f"  [heavy_links] SUCCESS: Found email on {target_url}: {found_emails[0]}")
+                return found_emails[0]
+
+            if RECURSIVE_EXTERNAL_SCAN and depth < 2:
+                is_agg = any(agg in target_url.lower() for agg in AGGREGATORS)
+                parsed_target = urlparse(target_url)
+                
+                # Proactive Sub-path Guessing (skip aggregators)
+                if not is_agg and (parsed_target.path in ["", "/"]):
+                    base = f"{parsed_target.scheme}://{parsed_target.netloc}"
+                    potential_subs = ["/contact", "/about", "/info"]
+                    for sub in potential_subs:
+                        sub_url = urljoin(base, sub)
+                        if sub_url not in seen_urls:
+                            seen_urls.add(sub_url)
+                            external_queue.appendleft((sub_url, 2))
+
+                # Extract Links
+                page_links = await page.eval_on_selector_all('a[href]', "els => els.map(el => el.href)")
+                for p_link in page_links:
+                    p_link_abs = urljoin(target_url, p_link)
+                    if p_link_abs in seen_urls: continue
+                    is_contact_link = any(kw in p_link_abs.lower() for kw in CONTACT_KEYWORDS)
+                    is_same_domain = urlparse(p_link_abs).netloc == parsed_target.netloc
+                    
+                    if (is_contact_link or is_same_domain) and is_safe_external_url(p_link_abs):
+                        seen_urls.add(p_link_abs)
+                        if is_contact_link: external_queue.appendleft((p_link_abs, 2))
+                        else: external_queue.append((p_link_abs, 2))
+
+        except PlaywrightTimeoutError:
+            if on_log: on_log(f"  [heavy_links] Timeout reaching {target_url}.")
+        except Exception as e:
+            if on_log: on_log(f"  [heavy_links] Error on {target_url}: {str(e)[:100]}")
+            continue
+
+    return None
+
