@@ -1,6 +1,6 @@
 """
 Email Scraper - Extracts public emails from YouTube channels
-using lightweight HTTP requests without headless browsers.
+using restricted metadata (descriptions) via YouTube API.
 """
 import sys
 import asyncio
@@ -14,8 +14,8 @@ from services.youtube import get_recent_videos
 async def extract_emails(results: list[dict], on_progress=None, on_log=None) -> list[dict]:
     """
     Main extraction pipeline:
-    1. YT Descriptions (Last N videos via API)
-    2. Lightweight External Links (Requests/BS4)
+    1. YouTube Channel and Video Descriptions (from Search results)
+    2. Recent Video Descriptions (via recursive API lookup)
     """
     total = len(results)
 

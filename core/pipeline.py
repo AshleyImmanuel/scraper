@@ -24,9 +24,6 @@ from core.config import (
 
 def run_extraction(job_id: str, req: ExtractionRequest):
     """Entry point for the background task, running in a dedicated thread and event loop."""
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:

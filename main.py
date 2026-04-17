@@ -6,10 +6,6 @@ import os
 import sys
 import asyncio
 
-# Windows: Force ProactorEventLoop to support Playwright subprocesses inside FastAPI
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse

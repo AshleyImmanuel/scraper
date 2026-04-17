@@ -48,11 +48,7 @@ TRUSTED_PROXY_IPS = {
 }
 
 # ---- YouTube API Settings ----
-_MAIN_YT_KEY = os.getenv("YOUTUBE_API_KEY", "")
-_TEST_YT_KEY = os.getenv("YOUTUBE_API_KEY_TEST", "")
-TEST_MODE = _env_flag("TEST_MODE", default=False)
-
-YOUTUBE_API_KEY = _TEST_YT_KEY if (TEST_MODE and _TEST_YT_KEY) else _MAIN_YT_KEY
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 
 YOUTUBE_DEFAULT_REGION = os.getenv("YOUTUBE_DEFAULT_REGION", "US").strip().upper() or "US"
 YOUTUBE_RELEVANCE_LANGUAGE = os.getenv("YOUTUBE_RELEVANCE_LANGUAGE", "en").strip() or "en"
@@ -60,13 +56,13 @@ YOUTUBE_RELEVANCE_LANGUAGE = os.getenv("YOUTUBE_RELEVANCE_LANGUAGE", "en").strip
 # Exclusion Keywords (For filtering edits, montages, gaming, music, AI, tutorials, and aesthetic junk)
 YOUTUBE_EXCLUSION_KEYWORDS = _env_csv(
     "YOUTUBE_EXCLUSION_KEYWORDS", 
-    "montage,edit,amv,gmv,phonk,tribute,status,alight motion,capcut,velocity,lyrics,ffx,"
+    "montage,edit,fanedit,tribute,status,alight motion,capcut,velocity,lyrics,ffx,"
     "gaming,gameplay,playthrough,walkthrough,"
     "music video,official video,song,mv,remix,mix,ncs,non-copyright,audio,vocal,instrumental,"
     "ai,stable diffusion,midjourney,dalle,"
     "tutorial,how to,course,lesson,"
     "aesthetic,vibe,mood,slowed,reverb,lofi,nightcore,relaxing,bass boosted,"
-    "animeedit,amvs,gmvs,tiktok,reels,shorts,compilation,reaction,instagram,"
+    "tiktok,reels,shorts,compilation,reaction,instagram,"
     "socks,feet,cosplay,best of,fan page,fan account,re-edit,repurposed,clips,moments,highlights",
     convert_to_upper=True
 )
@@ -128,26 +124,12 @@ ALLOWED_COUNTRIES_UK = _env_csv("YOUTUBE_ALLOWED_COUNTRIES_UK", "GB", convert_to
 
 # ---- Scraper Settings ----
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
-SCRAPER_MAX_RETRIES = _env_int("SCRAPER_MAX_RETRIES", 2, minimum=1, maximum=6)
-SCRAPER_RETRY_DELAY_MS = _env_int("SCRAPER_RETRY_DELAY_MS", 2000, minimum=250, maximum=60000)
-SCRAPER_CONCURRENCY = _env_int("SCRAPER_CONCURRENCY", 5, minimum=1, maximum=20)
-# Removed headless parameters
 SCRAPER_EMAIL_BLACKLIST = _env_csv_set(
     "SCRAPER_EMAIL_BLACKLIST",
     "noreply@youtube.com,support@google.com,press@youtube.com,example@example.com,name@example.com,email@example.com,copyright@youtube.com,legal@google.com,abuse@youtube.com"
 )
 
-# External Scraper Settings
-SCRAPER_LINK_AGGREGATORS = _env_csv(
-    "SCRAPER_LINK_AGGREGATORS",
-    "linktr.ee,bio.link,campsite.bio,tap.link,lnk.bio,beacons.ai,solo.to,allmylinks.com,direct.me,linkpop.com,taplink.at,msha.ke,shor.by,biolinky.co,instabio.cc,stan.store",
-    convert_to_upper=False
-)
-SCRAPER_CONTACT_SUBPATHS = _env_csv(
-    "SCRAPER_CONTACT_SUBPATHS",
-    "/contact,/about,/contact-us,/contactus,/contact-me,/reach-me,/info,/support,/imprint,/impressum,/legal,/management,/business,/partnership,/collab,/collaboration",
-    convert_to_upper=False
-)
+# Email Extraction Utility Settings
 SCRAPER_PROSE_TLDS = _env_csv_set(
     "SCRAPER_PROSE_TLDS",
     "this,that,some,every,now,here,there,all,the,with,from,for,only,well,more,like,just,very"
@@ -160,7 +142,6 @@ SCRAPER_JUNK_INDICATORS = _env_csv(
 
 # ---- Timeouts & Wait Times ----
 SCRAPER_THROTTLE_MS = _env_int("SCRAPER_THROTTLE_MS", 0, minimum=0, maximum=15000)
-# (Headless timeouts and waits removed)
 
 # ---- Extraction Job Constraints ----
 MAX_EXTRACT_BODY_BYTES = _env_int("MAX_EXTRACT_BODY_BYTES", 10000, minimum=1000)
