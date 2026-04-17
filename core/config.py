@@ -71,6 +71,13 @@ YOUTUBE_EXCLUSION_KEYWORDS = _env_csv(
     convert_to_upper=True
 )
 
+# Unbypassable language bugs (These are checked unconditionally)
+YOUTUBE_STRICT_EXCLUSIONS = _env_csv(
+    "YOUTUBE_STRICT_EXCLUSIONS",
+    "hindi,urdu,telugu,tamil,dub,sub,aur",
+    convert_to_upper=True
+)
+
 # Channel-specific exclusions (to avoid fan-run clip channels or repurposers)
 YOUTUBE_CHANNEL_EXCLUSION_KEYWORDS = _env_csv(
     "YOUTUBE_CHANNEL_EXCLUSION_KEYWORDS",

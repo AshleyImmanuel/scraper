@@ -5,15 +5,11 @@ using lightweight HTTP requests without headless browsers.
 import sys
 import asyncio
 import os
-import re
 import traceback
-import requests
 
 from core.config import FAST_CHECK_VIDEO_COUNT
 from services.utils.extraction import extract_emails_from_text
 from services.youtube import get_recent_videos
-from services.extraction.lightweight_strategy import try_extract_lightweight
-
 
 async def extract_emails(results: list[dict], on_progress=None, on_log=None) -> list[dict]:
     """
@@ -61,60 +57,18 @@ async def extract_emails(results: list[dict], on_progress=None, on_log=None) -> 
                 except Exception:
                     pass
 
-            # --- TIER 3: Lightweight External Links (Requests) ---
-            try:
-                if on_log: on_log(f"Analyzing {channel_name}...")
-                channel_about_url = row["channelUrl"] + "/about"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"
-                }
-                r = await asyncio.to_thread(requests.get, channel_about_url, headers=headers, timeout=8)
-                
-                # Extract emails natively from HTML just in case
-                html_emails = extract_emails_from_text(r.text)
-                if html_emails:
-                    row["EMAIL"] = html_emails[0]
-                    if on_progress: on_progress(idx + 1, total, channel_name, html_emails[0])
-                    return
-
-                # Fallback regex to find generic urls inside ytInitialData
-                links = set(re.findall(r'https?://[^\s\"\'\>\\]+', r.text))
-
-                found_email = None
-                ignored_domains = [
-                    "youtube.com", "youtu.be", "google.com", "gstatic.com", "schema.org", "xml", "w3.org",
-                    "instagram.com", "facebook.com", "twitter.com", "x.com", "tiktok.com", "linkedin.com",
-                    "apple.com", "spotify.com", "amazon.com", "amzn.to", "discord.gg", "discord.com", "patreon.com", "twitch.tv",
-                    "ytimg.com", "ggpht.com", "googlevideo.com", "googleapis.com", "googleusercontent.com", "gvt1.com"
-                ]
-
-                for l in links:
-                    if any(x in l.lower() for x in ignored_domains): continue
-                    
-                    # Fix urlencoded redirects
-                    if "q=" in l:
-                        from urllib.parse import urlparse, parse_qs
-                        try: 
-                            parsed_q = parse_qs(urlparse(l).query).get("q", [l])[0]
-                            if parsed_q.startswith("http"): l = parsed_q
-                        except: pass
-                    
-                    # Deep scan this link
-                    found_email = await asyncio.to_thread(try_extract_lightweight, l, on_log, 1)
-                    if found_email: break
-                    
-                if found_email:
-                    row["EMAIL"] = found_email
-                    if on_progress: on_progress(idx + 1, total, channel_name, found_email)
-                else:
-                    row["EMAIL"] = "nil"
-                    if on_progress: on_progress(idx + 1, total, channel_name, None)
-
-            except Exception as e:
-                row["EMAIL"] = "nil"
-                if on_progress: on_progress(idx + 1, total, channel_name, None)
+            # If we reach here, we didn't find an email in any description.
+            row["EMAIL"] = "nil"
+            if on_progress: on_progress(idx + 1, total, channel_name, None)
 
     tasks = [process_channel(idx, row) for idx, row in enumerate(results)]
     await asyncio.gather(*tasks)
 
-    return results
+    # NEW: "ignore the rest" -> Filter out channels that didn't yield an email
+    filtered_results = [r for r in results if r.get("EMAIL") and r["EMAIL"] != "nil"]
+    
+    if on_log:
+        dropped = len(results) - len(filtered_results)
+        on_log(f"Filtered out {dropped} channels that had no email in descriptions.")
+
+    return filtered_results

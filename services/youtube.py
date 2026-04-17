@@ -10,6 +10,7 @@ from core.config import (
     ALLOWED_COUNTRIES_US,
     ALLOWED_COUNTRIES_UK,
     YOUTUBE_EXCLUSION_KEYWORDS as EXCLUSION_KEYWORDS,
+    YOUTUBE_STRICT_EXCLUSIONS as STRICT_EXCLUSIONS,
     YOUTUBE_PRIORITY_KEYWORDS as PRIORITY_KEYWORDS,
     YOUTUBE_CHANNEL_EXCLUSION_KEYWORDS as CHANNEL_EXCLUSION_KEYWORDS,
     YOUTUBE_AUTHORITY_KEYWORDS as AUTHORITY_KEYWORDS,
@@ -95,37 +96,72 @@ def get_video_details(video_ids: list[str]):
             stats = item.get("statistics", {})
             raw_duration = item["contentDetails"].get("duration", "")
             details[vid] = {
+                "title": item.get("snippet", {}).get("title", ""),
                 "viewCount": int(stats.get("viewCount", 0)),
                 "likes": int(stats.get("likeCount", 0)),
                 "duration": parse_duration(raw_duration),
                 "duration_seconds": parse_duration_seconds(raw_duration),
+                "date": item.get("snippet", {}).get("publishedAt", "")[:10],
                 "isLive": "liveStreamingDetails" in item,
                 "description": item.get("snippet", {}).get("description", ""),
+                "audioLanguage": item.get("snippet", {}).get("defaultAudioLanguage", ""),
+                "defaultLanguage": item.get("snippet", {}).get("defaultLanguage", ""),
             }
 
     return details
 
 
 def get_channel_details(channel_ids: list[str]):
-    """Fetch channel statistics and metadata for a batch of IDs."""
+    """Fetch channel statistics and metadata for a batch of IDs and handles."""
     client = _build_client()
     details = {}
 
-    for i in range(0, len(channel_ids), 50):
-        batch = channel_ids[i : i + 50]
+    # Separate IDs (UC...) from handles (@...)
+    ids = [cid for cid in channel_ids if cid.startswith("UC")]
+    handles = [cid for cid in channel_ids if not cid.startswith("UC")]
+
+    # 1. Fetch IDs in batches
+    for i in range(0, len(ids), 50):
+        batch = ids[i : i + 50]
         request = client.channels().list(part="statistics,snippet", id=",".join(batch))
         response = request.execute()
-
         for item in response.get("items", []):
             cid = item["id"]
             stats = item.get("statistics", {})
             snippet = item.get("snippet", {})
             details[cid] = {
+                "title": snippet.get("title", ""),
                 "subscriberCount": int(stats.get("subscriberCount", 0)),
+                "viewCount": int(stats.get("viewCount", 0)), # Total channel views
                 "channelUrl": f"https://www.youtube.com/channel/{cid}",
                 "description": snippet.get("description", ""),
                 "country": snippet.get("country", ""), 
             }
+
+    # 2. Fetch Handles one by one (API doesn't support batch forHandle)
+    # We use a small amount of concurrency to speed this up if there are many handles
+    for handle in handles:
+        clean_handle = handle[1:] if handle.startswith("@") else handle
+        try:
+            request = client.channels().list(part="statistics,snippet", forHandle=clean_handle)
+            response = request.execute()
+            items = response.get("items", [])
+            if items:
+                item = items[0]
+                cid = item["id"]
+                stats = item.get("statistics", {})
+                snippet = item.get("snippet", {})
+                details[handle] = {
+                    "id": cid, # Real ID
+                    "title": snippet.get("title", ""),
+                    "subscriberCount": int(stats.get("subscriberCount", 0)),
+                    "viewCount": int(stats.get("viewCount", 0)),
+                    "channelUrl": f"https://www.youtube.com/channel/{cid}",
+                    "description": snippet.get("description", ""),
+                    "country": snippet.get("country", ""), 
+                }
+        except Exception:
+            continue
 
     return details
 
@@ -186,6 +222,37 @@ def get_full_channel_description(channel_id: str) -> str:
         return ""
 
 
+def is_strictly_rejected(title: str, description: str, channel_title: str, audio_lang: str = "", default_lang: str = "") -> bool:
+    """
+    Quality Check: Returns True if the content should be UNCONDITIONALLY REJECTED 
+    based on language codes, scripts (Devanagari), or strict exclusion keywords.
+    """
+    full_text = f"{title} {description} {channel_title}".upper()
+    
+    # 1. Language Code Check (e.g., Hindi, Urdu, etc.)
+    audio_lang = (audio_lang or "").lower()
+    def_lang = (default_lang or "").lower()
+    if any(lang in (audio_lang, def_lang) for lang in ["hi", "ur", "te", "ta", "mr", "bn"]):
+        return True
+            
+    # 2. Script Check (Devanagari for Hindi/Marathi/etc.)
+    import re
+    if re.search(r"[\u0900-\u097F]", full_text):
+        return True
+
+    # 3. Strict Keyword check (HINDI, URDU, etc. from configuration)
+    from core.config import YOUTUBE_STRICT_EXCLUSIONS as STRICT_EXCLUSIONS
+    for kw in STRICT_EXCLUSIONS:
+        kw_up = kw.upper()
+        if len(kw_up) <= 4:
+            if re.search(rf"\b{re.escape(kw_up)}\b", full_text):
+                return True
+        elif kw_up in full_text:
+            return True
+
+    return False
+
+
 def filter_results(
     videos: list[dict],
     video_details: dict,
@@ -211,6 +278,7 @@ def filter_results(
         "viewCount": 0,
         "subscriberCount": 0,
         "country": 0,
+        "language": 0,
     }
 
     for v in videos:
@@ -242,9 +310,23 @@ def filter_results(
             continue
 
         # 2. Broad Exclusion Filter
-        full_text = f"{v['title']} {v['description']} {v['channelTitle']}".upper()
+        # Use full details for better filtering if available
+        full_title = vd.get("title", v["title"])
+        full_desc = vd.get("description", v["description"])
+        full_text = f"{full_title} {full_desc} {v['channelTitle']}".upper()
         channel_name_up = v['channelTitle'].upper()
         
+        # QUALITY CHECK: Unconditional Strict Rejections (e.g., specific foreign languages)
+        if is_strictly_rejected(
+            vd.get("title", v["title"]),
+            vd.get("description", v["description"]),
+            v["channelTitle"],
+            vd.get("audioLanguage"),
+            vd.get("defaultLanguage")
+        ):
+            rejections["language"] += 1
+            continue
+
         # QUALITY CHECK: Niche Relevance
         # Allow channels to bypass generic junk filters if they strongly match the user's explicit search keyword, or general authority keywords.
         kw_upper = search_keyword.upper()
@@ -316,7 +398,7 @@ def filter_results(
             "Country": "UK" if cd.get("country") == "GB" else (cd.get("country") or v["region"]),
             "channelDescription": cd.get("description", ""), 
             "videoDescription": vd.get("description", ""),
-            "EMAIL": "nil",
+            "EMAIL": v.get("EMAIL", "nil"),
         })
 
     if on_log and any(rejections.values()):
