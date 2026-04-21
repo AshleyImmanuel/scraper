@@ -20,8 +20,12 @@ def _build_google_url(query: str, start: int = 0) -> str:
     encoded = quote_plus(query)
     return f"https://www.google.com/search?q={encoded}&start={start}&num=10"
 
-def _scraper_api_url(target_url: str) -> str:
+def _scraper_api_url(target_url: str, region: str = "US") -> str:
     """Wrap a URL with ScraperAPI proxy and advanced anti-bot flags."""
+    # Mapping region to ScraperAPI country codes
+    country_map = {"US": "us", "UK": "gb", "GB": "gb", "Both": "us"}
+    country_code = country_map.get(region, "us")
+    
     return (
         f"http://api.scraperapi.com"
         f"?api_key={SCRAPER_API_KEY}"
@@ -29,7 +33,7 @@ def _scraper_api_url(target_url: str) -> str:
         f"&render=true"
         f"&antibot=true"
         f"&premium=true"
-        f"&country_code=us"
+        f"&country_code={country_code}"
     )
 
 
@@ -142,10 +146,10 @@ def discover_channels_via_google(
         for page in range(GOOGLE_DISCOVERY_MAX_PAGES):
             start = page * 10
             google_url = _build_google_url(query, start)
-            api_url = _scraper_api_url(google_url)
+            api_url = _scraper_api_url(google_url, region=region)
 
             try:
-                resp = requests.get(api_url, timeout=30)
+                resp = requests.get(api_url, timeout=60)
                 if resp.status_code != 200:
                     if on_log:
                         on_log(f"[google] Got HTTP {resp.status_code} on page {page + 1}")
@@ -180,46 +184,61 @@ def discover_channels_via_google(
     return all_results
 
 
-def dork_specific_channel(
-    channel_name: str,
-    on_log=None,
-) -> list[str]:
+def dork_specific_channel(channel_name_or_handle, on_log=None):
     """
-    Perform a targeted Google search for a specific channel to find their email across the web.
+    Tier 4/5: Search Google specifically for this channel's email.
+    Uses ScraperAPI credits.
+    Now includes social media dorks for Instagram, Twitter, and LinkedIn bio inspection.
     """
-    from core.config import DIRECT_DORKING_ENABLED, DIRECT_DORKING_QUERIES
-    if not DIRECT_DORKING_ENABLED or not SCRAPER_API_KEY:
+    if not SCRAPER_API_KEY:
         return []
 
-    found_emails = []
+    # Prepare search queries
+    # If it starts with @, it's a handle, otherwise a name
+    clean_name = channel_name_or_handle.lstrip("@")
     
-    # We only use the first few queries to save credits and keep it fast
-    queries = [q.replace("{name}", channel_name) for q in DIRECT_DORKING_QUERIES[:2]]
+    queries = [
+        f'site:youtube.com "{channel_name_or_handle}" "email"',
+        f'"{channel_name_or_handle}" "business inquiries" email',
+        f'"{channel_name_or_handle}" contact email',
+        f'site:instagram.com "{clean_name}" email',
+        f'site:twitter.com "{clean_name}" email'
+    ]
+    
+    found_emails = []
+    import time
+    import random
+    
+    if on_log: on_log(f"  [dork] Searching for {channel_name_or_handle} via {len(queries)} variations...")
 
     for query in queries:
-        google_url = _build_google_url(query, 0)
-        api_url = _scraper_api_url(google_url)
-
         try:
-            resp = requests.get(api_url, timeout=30)
-            if resp.status_code == 200:
-                # IMPORTANT: We "textify" the HTML before extraction.
-                # Running regex on raw HTML picks up emails from <img> src, <link> href, etc.
-                # which causes image filenames to be identified as emails.
-                soup = BeautifulSoup(resp.text, "html.parser")
-                visible_text = soup.get_text(separator=" ", strip=True)
-                
-                emails = extract_emails_from_text(visible_text)
-                for e in emails:
-                    if e not in found_emails:
-                        found_emails.append(e)
+            # Rotate session for each dork query too
+            import uuid
+            dork_session = str(uuid.uuid4())[:12]
             
-            # If we already found some emails, we can stop to save credits
+            payload = {
+                'api_key': SCRAPER_API_KEY,
+                'url': f'https://www.google.com/search?q={quote_plus(query)}',
+                'render': 'false',
+                'session_id': dork_session
+            }
+            resp = requests.get('https://api.scraperapi.com/', params=payload, timeout=60)
+            if resp.status_code == 200:
+                emails = extract_emails_from_text(resp.text)
+                if emails:
+                    for e in emails:
+                        if e not in found_emails:
+                            found_emails.append(e)
+                    if on_log: on_log(f"    [dork] Found {len(emails)} emails for query detail: {query[:30]}...")
+            
+            # If we found emails, we can stop early to save credits
             if found_emails:
                 break
+                
+            # Short sleep between dork queries to avoid being flagged by proxy
+            time.sleep(random.uniform(1, 2))
         except Exception as e:
-            if on_log:
-                on_log(f"[dork] Error dorking '{channel_name}': {str(e)[:50]}")
-            continue
-
+            if on_log: on_log(f"    [dork] Query failed: {query[:30]}... ({str(e)[:50]})")
+            
     return found_emails

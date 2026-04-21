@@ -38,7 +38,7 @@ def _env_csv_set(name: str, default_csv: str) -> set[str]:
 
 # ---- App Settings ----
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT = _env_int("APP_PORT", 8000, minimum=1, maximum=65535)
+APP_PORT = _env_int("APP_PORT", 8001, minimum=1, maximum=65535)
 ENABLE_API_DOCS = _env_flag("ENABLE_API_DOCS", default=False)
 TRUST_PROXY_HEADERS = _env_flag("TRUST_PROXY_HEADERS", default=False)
 TRUSTED_PROXY_IPS = {
@@ -118,7 +118,6 @@ def _env_region_map(name: str, default_map: dict[str, str]) -> dict[str, str]:
 
 YOUTUBE_REGION_MAP = _env_region_map("YOUTUBE_REGION_MAP", {"US": "US", "UK": "GB", "GB": "GB"})
 
-ALLOWED_COUNTRIES_BOTH = _env_csv("YOUTUBE_ALLOWED_COUNTRIES_BOTH", "US,GB", convert_to_upper=True)
 ALLOWED_COUNTRIES_US = _env_csv("YOUTUBE_ALLOWED_COUNTRIES_US", "US", convert_to_upper=True)
 ALLOWED_COUNTRIES_UK = _env_csv("YOUTUBE_ALLOWED_COUNTRIES_UK", "GB", convert_to_upper=True)
 
@@ -148,24 +147,32 @@ SCRAPER_THROTTLE_MS = _env_int("SCRAPER_THROTTLE_MS", 0, minimum=0, maximum=1500
 # ---- Extraction Job Constraints ----
 MAX_EXTRACT_BODY_BYTES = _env_int("MAX_EXTRACT_BODY_BYTES", 10000, minimum=1000)
 MAX_CONCURRENT_JOBS = _env_int("MAX_CONCURRENT_JOBS", 2, minimum=1)
+SCRAPER_CONCURRENCY = _env_int("SCRAPER_CONCURRENCY", 3, minimum=1, maximum=50)
 JOB_RETENTION_SECONDS = _env_int("JOB_RETENTION_SECONDS", 21600, minimum=300)
 MAX_STORED_JOBS = _env_int("MAX_STORED_JOBS", 200, minimum=20)
 MAX_JOB_LOG_LINES = _env_int("MAX_JOB_LOG_LINES", 400, minimum=50)
-MAX_KEYWORDS_PER_JOB = _env_int("MAX_KEYWORDS_PER_JOB", 10, minimum=1, maximum=50)
-MAX_API_FETCHES = _env_int("MAX_API_FETCHES", 100, minimum=1, maximum=500)
-MAX_STALE_BATCHES = _env_int("MAX_STALE_BATCHES", 8, minimum=1, maximum=100)
+MAX_KEYWORDS_PER_JOB = _env_int("MAX_KEYWORDS_PER_JOB", 50, minimum=1, maximum=100)
+MAX_API_FETCHES = _env_int("MAX_API_FETCHES", 500, minimum=1, maximum=1000)
+MAX_STALE_BATCHES = _env_int("MAX_STALE_BATCHES", 30, minimum=1, maximum=100)
 MIN_MATCH_TARGET_ABSOLUTE = _env_int("MIN_MATCH_TARGET_ABSOLUTE", 20, minimum=1)
 MIN_MATCH_TARGET_DIVISOR = _env_int("MIN_MATCH_TARGET_DIVISOR", 10, minimum=1)
 
 # ---- Web Crawler Settings (Apify-style page crawling) ----
 CRAWLER_ENABLED = _env_flag("CRAWLER_ENABLED", default=True)
 CRAWLER_DELAY_MS = _env_int("CRAWLER_DELAY_MS", 1000, minimum=0, maximum=10000)
-CRAWLER_MAX_PAGES = _env_int("CRAWLER_MAX_PAGES", 20, minimum=1, maximum=50)
+CRAWLER_MAX_PAGES = _env_int("CRAWLER_MAX_PAGES", 50, minimum=1, maximum=100)
 
 # Local Browser Settings (Playwright)
-USE_LOCAL_BROWSER = _env_flag("USE_LOCAL_BROWSER", default=False)
+USE_LOCAL_BROWSER = _env_flag("USE_LOCAL_BROWSER", default=True)
 BROWSER_HEADLESS = _env_flag("BROWSER_HEADLESS", default=True)
-BROWSER_TIMEOUT_MS = _env_int("BROWSER_TIMEOUT_MS", 30000, minimum=5000)
+BROWSER_TIMEOUT_MS = _env_int("BROWSER_TIMEOUT_MS", 90000, minimum=5000)
+BROWSER_USER_DATA_DIR = os.getenv("BROWSER_USER_DATA_DIR", "./.browser_data")
+USE_BROWSER_PROXY = _env_flag("USE_BROWSER_PROXY", default=True)
+BROWSER_ZOOM = float(os.getenv("BROWSER_ZOOM", "0.8"))
+BROWSER_PROXY_SESSION = os.getenv("BROWSER_PROXY_SESSION", "").strip()  # Fixed proxy session for persistent login
+YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES", "").strip()  # Base64-encoded cookies for hosted deployments
+PACING_DELAY_SECONDS = float(os.getenv("PACING_DELAY_SECONDS", "3.0"))
+ENABLE_ADVANCED_STEALTH = _env_flag("ENABLE_ADVANCED_STEALTH", default=True)
 
 # NEW: Deep Scan Settings
 DEEP_SCAN_LIMIT = _env_int("DEEP_SCAN_LIMIT", 15, minimum=1, maximum=50)
@@ -198,9 +205,6 @@ RATE_LIMIT_MAX_KEYS = _env_int("RATE_LIMIT_MAX_KEYS", 5000, minimum=100)
 RATE_LIMIT_EXTRACT_PER_MIN = _env_int("RATE_LIMIT_EXTRACT_PER_MIN", 6, minimum=1)
 RATE_LIMIT_STATUS_PER_MIN = _env_int("RATE_LIMIT_STATUS_PER_MIN", 240, minimum=10)
 RATE_LIMIT_DOWNLOAD_PER_MIN = _env_int("RATE_LIMIT_DOWNLOAD_PER_MIN", 30, minimum=1)
-
-# ---- Region Logic ----
-BOTH_REGION_SEQUENCE = _env_csv("BOTH_REGION_SEQUENCE", "US,UK", convert_to_upper=True)
 
 # ---- Output Settings ----
 EXCEL_OUTPUT_COLUMNS = _env_csv(

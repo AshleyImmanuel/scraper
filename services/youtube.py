@@ -6,7 +6,6 @@ from googleapiclient.discovery import build
 from core.config import (
     YOUTUBE_API_KEY,
     YOUTUBE_RELEVANCE_LANGUAGE,
-    ALLOWED_COUNTRIES_BOTH,
     ALLOWED_COUNTRIES_US,
     ALLOWED_COUNTRIES_UK,
     YOUTUBE_EXCLUSION_KEYWORDS as EXCLUSION_KEYWORDS,
@@ -25,7 +24,6 @@ from services.utils.youtube_helpers import (
 )
 
 ALLOWED_COUNTRIES_BY_REGION = {
-    "Both": ALLOWED_COUNTRIES_BOTH,
     "US": ALLOWED_COUNTRIES_US,
     "UK": ALLOWED_COUNTRIES_UK,
 }

@@ -138,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     finishExtraction(data.videosSearched, data.total, data.emailsFound, jobId);
                 } else if (data.status === 'failed') {
                     stopPolling();
-                    handleJobFailure(getResponseErrorMessage(data, 'Extraction job failed.'));
+                    handleJobFailure(getResponseErrorMessage(data, 'Extraction job failed.'), jobId, data.filePath, data);
                 } else {
                     scheduleNextPoll(1500);
                 }
@@ -219,24 +219,49 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    function handleJobFailure(message) {
+    function handleJobFailure(message, jobId, filePath, data) {
         appendLog(`> [ERR] Job failed: ${message}`);
+        
+        // If we have a file, treat as "Partial Success"
+        if (filePath || (data && data.emailsFound > 0)) {
+            showToast('Extraction interrupted. Partial results saved.', 'warning');
+            
+            // Show success panel but customize for partial
+            setTimeout(() => {
+                statusPanel.classList.add('hidden');
+                successPanel.classList.remove('hidden');
+                
+                // Update stats if we have them
+                document.getElementById('vidCount').textContent = data?.videosSearched || 0;
+                document.getElementById('matchCount').textContent = data?.channelsMatched || data?.total || 0;
+                document.getElementById('emailCount').textContent = data?.emailsFound || 0;
+                
+                // Change the text to reflect partial
+                const successTitle = successPanel.querySelector('h3');
+                if (successTitle) successTitle.textContent = "Extraction Interrupted";
+                const successPara = successPanel.querySelector('p');
+                if (successPara) successPara.textContent = "We hit a limit, but we saved the leads found so far.";
+                
+                resetButton();
+                
+                // Wire download button
+                const downloadBtn = document.getElementById('downloadBtn');
+                downloadBtn.onclick = async () => {
+                    window.location.href = `/api/download/${jobId}`;
+                };
+            }, 600);
+            return;
+        }
+
         showToast(message || 'Extraction job failed.', 'error');
         statusMessage.textContent = message || 'Extraction failed.';
         progressFill.style.width = '100%';
         progressFill.style.background = 'rgba(255, 82, 82, 0.72)';
-        statusPanel.style.opacity = '0.82';
-        statusPanel.style.filter = 'saturate(0.8)';
 
         setTimeout(() => {
             statusPanel.classList.add('hidden');
             resetButton();
-            statusMessage.textContent = 'Connecting to proxy network...';
-            progressFill.style.width = '0%';
-            progressFill.style.background = '';
-            statusPanel.style.opacity = '';
-            statusPanel.style.filter = '';
-        }, 600);
+        }, 3000); // Leave it visible longer on total fail
     }
 
     function resetButton() {
@@ -412,4 +437,11 @@ document.addEventListener('DOMContentLoaded', () => {
         div.textContent = text;
         return div.innerHTML;
     }
+
+    // --- Safety Feature: Disable scroll wheel on number inputs ---
+    window.addEventListener('wheel', (e) => {
+        if (document.activeElement.type === 'number') {
+            document.activeElement.blur();
+        }
+    }, { passive: false });
 });

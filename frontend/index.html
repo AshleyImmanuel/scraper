@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=6">
+    <link rel="stylesheet" href="/static/style.css?v=25">
 </head>
 <body>
     <div class="glow-bg"></div>
@@ -23,7 +23,7 @@
                     <path d="M21.582 6.186C21.4938 5.86014 21.3323 5.56079 21.1114 5.31341C20.8906 5.06603 20.6169 4.87816 20.314 4.76601C18.665 4.331 12 4.331 12 4.331C12 4.331 5.335 4.331 3.686 4.78601C3.38318 4.89816 3.10943 5.08603 2.88856 5.33341C2.6677 5.58079 2.50624 5.88014 2.418 6.20601C2 7.85401 2 11.233 2 11.233C2 11.233 2 14.612 2.418 16.26C2.50624 16.5859 2.6677 16.8852 2.88856 17.1326C3.10943 17.38 3.38318 17.5679 3.686 17.68C5.335 18.135 12 18.135 12 18.135C12 18.135 18.665 18.135 20.314 17.68C20.6169 17.5679 20.8906 17.38 21.1114 17.1326C21.3323 16.8852 21.4938 16.5859 21.582 16.26C22 14.612 22 11.233 22 11.233C22 11.233 22 7.85401 21.582 6.186Z" fill="#ff0000"/>
                     <path d="M10 14.5L15.5 11.5L10 8.5V14.5Z" fill="white"/>
                 </svg>
-                <h1>YT LeadMiner</h1>
+                <h1>YT LeadMiner <span style="font-size: 0.8rem; background: rgba(234, 51, 35, 0.2); color: var(--accent-red); padding: 4px 8px; border-radius: 6px; margin-left: 8px; vertical-align: middle; border: 1px solid rgba(234, 51, 35, 0.3);">v2.5 Sync</span></h1>
             </div>
             <p class="subtitle">High-precision lead generation targeted at top YouTube creators.</p>
         </header>        
@@ -38,7 +38,11 @@
                         </div>
                         <div class="keyword-box">
                             <div id="keywordList" class="keyword-list">
-                                <!-- Dynamic rows -->
+                                <!-- Default row for stability -->
+                                <div class="keyword-row">
+                                    <span class="row-index">1</span>
+                                    <input type="text" placeholder="Enter keyword..." value="" data-index="0">
+                                </div>
                             </div>
                             <div class="keyword-footer">
                                 <button type="button" class="footer-btn" id="addKeywordRow">
@@ -84,8 +88,7 @@
                         <label for="region">Target Region</label>
                         <div class="select-wrapper">
                             <select id="region" name="region" required>
-                                <option value="Both">Global (US & UK)</option>
-                                <option value="US">United States (US)</option>
+                                <option value="US" selected>United States (US)</option>
                                 <option value="UK">United Kingdom (UK)</option>
                             </select>
                         </div>
@@ -94,7 +97,7 @@
                         <label for="dateFilter">Upload Date Filter</label>
                         <div class="select-wrapper">
                             <select id="dateFilter" name="dateFilter" required>
-                                <option value="All Time">All Time</option>
+
                                 <option value="This Year">This Year</option>
                                 <option value="Last Month">Last Month</option>
                                 <option value="This Week">This Week</option>
@@ -187,6 +190,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=8"></script>
+    <script src="/static/app.js?v=25"></script>
 </body>
 </html>

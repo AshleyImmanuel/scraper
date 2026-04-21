@@ -1,9 +1,40 @@
+# ---- Python ----
 __pycache__/
 *.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
 .pytest_cache/
+
+# ---- Virtual Environments ----
 .venv/
 venv/
+venv311/
 env/
+
+# ---- Environment & Secrets ----
 .env
+
+# ---- Output ----
 output/
-pytest-cache-files-*/
+
+# ---- Browser Data ----
+.browser_data/
+
+# ---- Scratch / Debug Scripts ----
+scratch/
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Misc ----
+*.log

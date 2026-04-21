@@ -158,8 +158,9 @@ def extract_emails_from_text(text: str) -> list[str]:
         # Junk filter: checks if the email ITSELF contains junk words
         # We check this twice: once on the raw e_low and once on a more normalized version
         # to ensure strings like "image-png" or ".png" both trigger it.
-        if any(junk in e_low for junk in JUNK_INDICATORS):
-            continue
+        # Junk filter: (Relaxed per user request to allow support/info emails)
+        # if any(junk in e_low for junk in JUNK_INDICATORS):
+        #     continue
 
         # Blacklist check
         if e_low in BLACKLIST:

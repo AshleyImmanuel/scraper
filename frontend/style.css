@@ -63,8 +63,9 @@ body {
 .form-group { display: flex; flex-direction: column; gap: 8px; }
 
 label {
-    font-size: 0.85rem; font-weight: 500; color: #e2e2e5;
-    letter-spacing: 0.3px; text-transform: uppercase;
+    font-size: 0.85rem; font-weight: 600; color: #ffffff;
+    letter-spacing: 0.5px; text-transform: uppercase;
+    display: block; margin-bottom: 4px; border-left: 2px solid var(--accent-red); padding-left: 8px;
 }
 
 input, select {
@@ -77,6 +78,18 @@ input:focus, select:focus {
     box-shadow: 0 0 0 3px rgba(234, 51, 35, 0.15);
 }
 input::placeholder { color: rgba(154, 160, 166, 0.4); }
+input:invalid { border-color: rgba(255, 82, 82, 0.4); }
+
+/* Remove standard number spinners/arrows to prevent misclicks */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
 
 /* Range Row */
 .range-row {
@@ -231,6 +244,7 @@ select { width: 100%; appearance: none; -webkit-appearance: none; }
     flex-direction: column;
     gap: 10px;
     padding-right: 4px;
+    min-height: 60px;
 }
 .keyword-list::-webkit-scrollbar { width: 5px; }
 .keyword-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }

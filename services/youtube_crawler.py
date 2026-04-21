@@ -5,6 +5,10 @@ Instead of using the YouTube Data API for search (100 quota units per call),
 this module crawls YouTube's actual search result pages via ScraperAPI,
 parses the embedded `ytInitialData` JSON, and extracts video/channel data.
 
+When USE_LOCAL_BROWSER is enabled, it uses a local Playwright browser with
+"Natural Scrolling" to load search results, which is the safest way to
+avoid bot detection on your local IP.
+
 This reduces API quota consumption by ~90% while using ScraperAPI credits
 the user already pays for.
 """
@@ -12,10 +16,18 @@ the user already pays for.
 import re
 import json
 import time
+import asyncio
 import requests
 from urllib.parse import quote_plus
 
-from core.config import SCRAPER_API_KEY
+from core.config import SCRAPER_API_KEY, USE_LOCAL_BROWSER, BROWSER_TIMEOUT_MS
+from services.utils.browser_manager import BrowserManager, PLAYWRIGHT_AVAILABLE
+
+try:
+    from playwright_recaptcha import recaptchav2
+except ImportError:
+    recaptchav2 = None
+
 
 # YouTube's public InnerTube API key (embedded in the frontend, not secret)
 INNERTUBE_API_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
@@ -36,30 +48,30 @@ INNERTUBE_CONTEXT = {
 # Date-only filters (type=video implied)
 _SP_FILTERS = {
     # (date_filter, video_type) -> sp code
-    ("All Time", "All"):    "EgIQAQ%3D%3D",
+
     ("Today", "All"):       "EgQIAhAB",
     ("This Week", "All"):   "EgQIAxAB",
     ("Last Month", "All"):  "EgQIBBAB",
     ("This Year", "All"):   "EgQIBRAB",
 
 # Date + Long videos (>20 min)
-    ("All Time", "Long"):    "EgQQARgC",
-    ("Today", "Long"):       "EgYIAhABGAI%3D",
-    ("This Week", "Long"):   "EgYIAxABGAI%3D",
-    ("Last Month", "Long"):  "EgYIBBABGAI%3D",
-    ("This Year", "Long"):   "EgYIBRABGAI%3D",
+
+    ("Today", "Long"):       "EgYIAhABGAI=",
+    ("This Week", "Long"):   "EgYIAxABGAI=",
+    ("Last Month", "Long"):  "EgYIBBABGAI=",
+    ("This Year", "Long"):   "EgYIBRABGAI=",
 
     # Date + Short videos (<4 min)
-    ("All Time", "Shorts"):  "EgQQARgE",
-    ("Today", "Shorts"):     "EgYIAhABGAQ%3D",
-    ("This Week", "Shorts"): "EgYIAxABGAQ%3D",
-    ("Last Month", "Shorts"):"EgYIBBABGAQ%3D",
-    ("This Year", "Shorts"): "EgYIBRABGAQ%3D",
+
+    ("Today", "Shorts"):     "EgYIAhABGAQ=",
+    ("This Week", "Shorts"): "EgYIAxABGAQ=",
+    ("Last Month", "Shorts"):"EgYIBBABGAQ=",
+    ("This Year", "Shorts"): "EgYIBRABGAQ=",
 }
 
 # Fallback: date-only if video_type isn't recognized
 _SP_DATE_ONLY = {
-    "All Time":   "EgIQAQ%3D%3D",
+
     "Today":      "EgQIAhAB",
     "This Week":  "EgQIAxAB",
     "Last Month": "EgQIBBAB",
@@ -81,17 +93,21 @@ def _get_gl_code(region: str) -> str:
     return mapping.get(region, "US")
 
 
-def _scraper_api_fetch(url: str, timeout: int = 35) -> str | None:
+def _scraper_api_fetch(url: str, region: str = "US", timeout: int = 60) -> str | None:
     """Fetch a URL through ScraperAPI proxy. Returns HTML text or None."""
     if not SCRAPER_API_KEY:
         return None
+
+    # Map mapping region to ScraperAPI country codes
+    country_map = {"US": "us", "UK": "gb", "GB": "gb", "Both": "us"}
+    country_code = country_map.get(region, "us")
 
     api_url = (
         f"http://api.scraperapi.com"
         f"?api_key={SCRAPER_API_KEY}"
         f"&url={quote_plus(url)}"
         f"&render=false"
-        f"&country_code=us"
+        f"&country_code={country_code}"
     )
     try:
         resp = requests.get(api_url, timeout=timeout)
@@ -377,6 +393,10 @@ def _process_video_renderer(video: dict, videos: list):
     })
 
 
+# ---------------------------------------------------------------------------
+# Public API — Sync wrapper + Async local-browser implementation
+# ---------------------------------------------------------------------------
+
 def crawl_youtube_search(
     keyword: str,
     region: str,
@@ -386,10 +406,15 @@ def crawl_youtube_search(
     on_log=None,
 ) -> tuple[list[dict], str | None]:
     """
-    Crawl a page of YouTube search results.
+    Crawl a page of YouTube search results (SYNC entry point).
 
-    First call: Fetches the YouTube search page HTML via ScraperAPI, parses ytInitialData.
-    Subsequent calls: Uses the continuation token with YouTube's InnerTube API.
+    When USE_LOCAL_BROWSER is False (or Playwright unavailable):
+      - First call: Fetches the YouTube search page HTML via ScraperAPI, parses ytInitialData.
+      - Subsequent calls: Uses the continuation token with YouTube's InnerTube API.
+
+    When USE_LOCAL_BROWSER is True:
+      - This is a thin sync wrapper; the real work happens in crawl_youtube_search_async().
+      - Should NOT be called from this path; use crawl_youtube_search_async() instead.
 
     Returns: (list_of_video_dicts, next_continuation_token_or_None)
     """
@@ -400,6 +425,288 @@ def crawl_youtube_search(
         # --- First page: Crawl the HTML search results page ---
         return _fetch_first_page(keyword, region, date_filter, video_type, on_log)
 
+
+async def crawl_youtube_search_async(
+    keyword: str,
+    region: str,
+    date_filter: str,
+    video_type: str = "All",
+    continuation_token: str | None = None,
+    on_log=None,
+    page=None,
+) -> tuple[list[dict], str | None]:
+    """
+    Async YouTube search crawler.
+
+    When USE_LOCAL_BROWSER is True and Playwright is available:
+      Uses a local Chromium browser with "Natural Scrolling" to load results.
+    Otherwise:
+      Falls back to ScraperAPI (runs the sync version in a thread).
+    """
+    if USE_LOCAL_BROWSER and PLAYWRIGHT_AVAILABLE:
+        return await _crawl_with_local_browser(
+            keyword, region, date_filter, video_type, on_log, page=page
+        )
+    else:
+        # Run the sync ScraperAPI version in a thread pool
+        return await asyncio.to_thread(
+            crawl_youtube_search,
+            keyword, region, date_filter, video_type, continuation_token, on_log
+        )
+
+
+# ---------------------------------------------------------------------------
+# Local Browser — Natural Scrolling implementation
+# ---------------------------------------------------------------------------
+
+async def _crawl_with_local_browser(
+    keyword: str,
+    region: str,
+    date_filter: str,
+    video_type: str,
+    on_log=None,
+    page=None,
+) -> tuple[list[dict], str | None]:
+    """
+    Use a local Playwright browser to search YouTube and scroll down to
+    load more results naturally.  Returns all videos found and no
+    continuation token (the browser handles pagination via scrolling).
+    """
+    gl = _get_gl_code(region)
+    sp = _get_sp_filter(date_filter, video_type)
+
+    search_url = (
+        f"https://www.youtube.com/results"
+        f"?search_query={quote_plus(keyword)}"
+        f"&sp={sp}"
+        f"&gl={gl}"
+        f"&hl=en"
+        f"&persist_gl=1"
+    )
+
+    if on_log:
+        on_log(f"Crawling YouTube search (Local Browser): '{keyword}' (region={region}, filter={date_filter}, type={video_type})")
+
+    # Use existing page or create a temporary one
+    temp_context = None
+    if not page:
+        temp_context, page = await BrowserManager.get_page(region=region)
+        if not page:
+            if on_log: on_log("Failed to launch local browser page.")
+            return [], None
+
+    try:
+        # FORCE LOAD: Don't wait for any specific event, just trigger navigation
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                # Apply Zoom Protection (Resilient to proxy lag)
+                from core.config import BROWSER_ZOOM
+                if BROWSER_ZOOM and BROWSER_ZOOM != 1.0:
+                    try:
+                        zoom_pct = int(BROWSER_ZOOM * 100)
+                        await page.add_init_script(f"document.documentElement.style.zoom = '{zoom_pct}%'")
+                    except: pass
+                
+                await page.goto(search_url, wait_until="commit", timeout=BROWSER_TIMEOUT_MS)
+                break
+            except Exception as e:
+                err_msg = str(e)
+                if "403" in err_msg or "Forbidden" in err_msg:
+                    on_log(f"[CRITICAL ERR] Proxy blocked search with 403 Forbidden. Is your ScraperAPI account out of credits?")
+                on_log(f"Navigation failed on attempt {attempt+1}: {err_msg}")
+                if attempt == max_retries - 1:
+                    raise e
+                await asyncio.sleep(2)
+        
+        # SMART WAIT: Wait for actual video content OR a captcha to appear
+        if on_log: on_log("  Waiting for YouTube content to load (max 30s)...")
+        try:
+            # Check for video renderers OR the presence of common captcha markers
+            await page.wait_for_selector('ytd-video-renderer, #captcha-container, .g-recaptcha, #video-title', timeout=30000)
+            if on_log: on_log("  YouTube content detected.")
+        except Exception:
+            page_title = await page.title()
+            if on_log: on_log(f"  Content not detected (title: '{page_title}'); checking for CAPTCHA...")
+            await asyncio.sleep(2) 
+
+        # --- Automated CAPTCHA Solving ---
+        if recaptchav2:
+            try:
+                # Look for ReCaptcha frames or anchors
+                captcha_found = await page.locator('iframe[src*="recaptcha/api2/anchor"]').first.is_visible(timeout=3000)
+                if captcha_found:
+                    if on_log: on_log("  [captcha] DETECTED — Launching automated audio solver...")
+                    async with recaptchav2.AsyncSolver(page) as solver:
+                        await solver.solve_recaptcha(wait=True)
+                    if on_log: on_log("  [captcha] [OK] CAPTCHA auto-solved. Resuming search...")
+                    await asyncio.sleep(2)
+            except Exception as e:
+                if on_log: on_log(f"  [captcha] [info] Solver check finished: {str(e)[:50]}")
+
+        # --- Consent / Cookie Dialogs ---
+        # YouTube sometimes shows a consent dialog; try to dismiss it.
+        try:
+            consent_btn = page.locator('button:has-text("Accept all"), button:has-text("Reject all"), button[aria-label="Accept all"]').first
+            if await consent_btn.is_visible(timeout=2000):
+                await consent_btn.click()
+                await asyncio.sleep(1)
+        except Exception:
+            pass
+
+        # --- Natural Scrolling ---
+        # Scroll down multiple times to load more results.
+        max_scrolls = 15
+        scroll_pause = 2.5  # seconds between scrolls
+        last_height = 0
+
+        for scroll_i in range(max_scrolls):
+            # Scroll to bottom
+            await page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+            await asyncio.sleep(scroll_pause)
+
+            # Check if we've reached the end (no new content loaded)
+            new_height = await page.evaluate("document.documentElement.scrollHeight")
+            if new_height == last_height:
+                if on_log:
+                    on_log(f"  [scroll] Reached bottom of results after {scroll_i + 1} scrolls.")
+                break
+            last_height = new_height
+
+            if on_log and (scroll_i + 1) % 5 == 0:
+                on_log(f"  [scroll] Scrolled {scroll_i + 1} times...")
+
+        # --- Extract ytInitialData from the page ---
+        # After scrolling, the DOM will have all loaded results.
+        # We can extract ytInitialData from the page's JS state.
+        yt_data = await page.evaluate("""
+            () => {
+                if (typeof ytInitialData !== 'undefined') return ytInitialData;
+                return null;
+            }
+        """)
+
+        if not yt_data:
+            # Fallback: parse from HTML
+            html_content = await page.content()
+            yt_data = _parse_yt_initial_data(html_content)
+
+        if not yt_data:
+            if on_log:
+                on_log("Failed to extract ytInitialData from local browser page.")
+            return [], None
+
+        videos, _ = _extract_videos_from_data(yt_data)
+
+        # Also try to get videos from continuation items that were loaded via scrolling
+        # YouTube appends these via JS, so we also parse the DOM directly
+        dom_videos = await _extract_videos_from_dom(page)
+        
+        # Merge: DOM extraction catches scroll-loaded videos that ytInitialData doesn't have
+        seen_ids = {v["videoId"] for v in videos}
+        for dv in dom_videos:
+            if dv["videoId"] not in seen_ids:
+                videos.append(dv)
+                seen_ids.add(dv["videoId"])
+
+        if on_log:
+            on_log(f"Parsed {len(videos)} videos from local browser (ytInitialData + DOM).")
+
+        # No continuation token in browser mode — scrolling IS the pagination
+        return videos, None
+
+    except Exception as e:
+        if on_log:
+            on_log(f"Error during local browser crawl: {str(e)[:80]}")
+        return [], None
+    finally:
+        if temp_context:
+            try:
+                await temp_context.close()
+            except Exception:
+                pass
+
+
+async def _extract_videos_from_dom(page) -> list[dict]:
+    """
+    Parse video information directly from the rendered DOM.
+    This captures videos that were loaded via infinite scroll (not in the
+    initial ytInitialData).
+    """
+    try:
+        videos = await page.evaluate("""
+            () => {
+                const results = [];
+                const renderers = document.querySelectorAll('ytd-video-renderer');
+                
+                for (const renderer of renderers) {
+                    try {
+                        const titleEl = renderer.querySelector('#video-title');
+                        const title = titleEl ? titleEl.textContent.trim() : '';
+                        const href = titleEl ? titleEl.getAttribute('href') : '';
+                        const videoId = href ? new URLSearchParams(href.split('?')[1] || '').get('v') || '' : '';
+                        
+                        const channelEl = renderer.querySelector('#channel-name a, .ytd-channel-name a, #text.ytd-channel-name');
+                        const channelName = channelEl ? channelEl.textContent.trim() : '';
+                        const channelHref = channelEl ? (channelEl.getAttribute('href') || '') : '';
+                        
+                        // Extract channel ID from href (e.g., /channel/UCxxxx or /@handle)
+                        let channelId = '';
+                        if (channelHref.includes('/channel/')) {
+                            channelId = channelHref.split('/channel/')[1]?.split('/')[0] || '';
+                        }
+                        
+                        const viewsEl = renderer.querySelector('.inline-metadata-item, #metadata-line span');
+                        const viewsText = viewsEl ? viewsEl.textContent.trim() : '';
+                        
+                        const durationEl = renderer.querySelector('ytd-thumbnail-overlay-time-status-renderer span, .ytd-thumbnail-overlay-time-status-renderer');
+                        const durationText = durationEl ? durationEl.textContent.trim() : '';
+                        
+                        const descEl = renderer.querySelector('#description-text, .metadata-snippet-text');
+                        const descText = descEl ? descEl.textContent.trim() : '';
+                        
+                        if (videoId) {
+                            results.push({
+                                videoId,
+                                title,
+                                channelId,
+                                channelTitle: channelName,
+                                viewsText,
+                                durationText,
+                                description: descText,
+                            });
+                        }
+                    } catch (e) {
+                        // Skip this renderer on error
+                    }
+                }
+                return results;
+            }
+        """)
+
+        # Post-process: convert view counts and durations
+        processed = []
+        for v in videos:
+            processed.append({
+                "videoId": v["videoId"],
+                "title": v["title"],
+                "channelId": v["channelId"],
+                "channelTitle": v["channelTitle"],
+                "viewCount": _parse_view_count(v.get("viewsText", "")),
+                "duration": v.get("durationText", "0:00"),
+                "duration_seconds": _parse_duration_text(v.get("durationText", "")),
+                "publishedText": "",
+                "description": v.get("description", ""),
+            })
+        return processed
+
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# ScraperAPI — Original sync implementation
+# ---------------------------------------------------------------------------
 
 def _fetch_first_page(
     keyword: str,
@@ -424,7 +731,7 @@ def _fetch_first_page(
     if on_log:
         on_log(f"Crawling YouTube search: '{keyword}' (region={region}, filter={date_filter}, type={video_type})")
 
-    html = _scraper_api_fetch(search_url)
+    html = _scraper_api_fetch(search_url, region=region)
     if not html:
         if on_log:
             on_log("Failed to fetch YouTube search page via ScraperAPI.")

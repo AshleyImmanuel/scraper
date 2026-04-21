@@ -6,10 +6,12 @@ import uuid
 import time
 import traceback
 from datetime import datetime, timezone
+import httpx
 from googleapiclient.errors import HttpError
 
 from services.youtube import get_channel_details, filter_results, is_strictly_rejected
-from services.youtube_crawler import crawl_youtube_search
+from services.youtube_crawler import crawl_youtube_search, crawl_youtube_search_async
+from services.utils.browser_manager import BrowserManager
 from services.google_discovery import discover_channels_via_google
 from services.scraper import extract_emails
 from services.excel import generate_excel
@@ -17,10 +19,10 @@ from core.job_manager import get_job, log_to_job
 from core.models import ExtractionRequest
 from core.config import (
     MAX_KEYWORDS_PER_JOB,
-    BOTH_REGION_SEQUENCE,
     GOOGLE_DISCOVERY_ENABLED,
     CRAWLER_ENABLED,
     CRAWLER_DELAY_MS,
+    USE_LOCAL_BROWSER,
     YOUTUBE_EXCLUSION_KEYWORDS as EXCLUSION_KEYWORDS,
     YOUTUBE_STRICT_EXCLUSIONS as STRICT_EXCLUSIONS,
     YOUTUBE_PRIORITY_KEYWORDS as PRIORITY_KEYWORDS,
@@ -131,6 +133,37 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
     log_to_job(job_id, "DEBUG: Extraction process entered.")
     
     try:
+        # ---- Pre-flight Health Check ----
+        log_to_job(job_id, "Checking API/Proxy Health...")
+        sa_key = os.getenv("SCRAPER_API_KEY")
+        if not sa_key:
+            log_to_job(job_id, "[CRUCIAL ERR] ScraperAPI Key is MISSING in .env!")
+            job["status"] = "failed"
+            job["error"] = "ScraperAPI Key is missing."
+            job["finishedAt"] = datetime.now(timezone.utc).isoformat()
+            return
+
+        try:
+            # Quick ping to ScraperAPI
+            test_url = f"http://api.scraperapi.com?api_key={sa_key}&url=https://www.google.com"
+            async with httpx.AsyncClient(timeout=10) as client:
+                res = await client.get(test_url)
+                if res.status_code == 403:
+                    log_to_job(job_id, "===============================================")
+                    log_to_job(job_id, "[CRUCIAL ERR] SCRAPER-API CREDITS EXHAUSTED (403)")
+                    log_to_job(job_id, "Please refill your account at scraperapi.com")
+                    log_to_job(job_id, "===============================================")
+                    job["status"] = "failed"
+                    job["error"] = "ScraperAPI Credits Exhausted (Status 403)"
+                    job["finishedAt"] = datetime.now(timezone.utc).isoformat()
+                    return
+                elif res.status_code != 200:
+                    log_to_job(job_id, f"[WARN] Proxy ping returned status {res.status_code}. Attempting to proceed...")
+                else:
+                    log_to_job(job_id, "[OK] Proxy network initialized.")
+        except Exception as e:
+            log_to_job(job_id, f"[WARN] Proxy health check failed to respond: {e}. Attempting to proceed anyway...")
+
         # ---- Keyword / Region Setup ----
         keywords = [k.strip() for k in req.keyword.split(",") if k.strip()]
         if not keywords:
@@ -139,7 +172,7 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
             log_to_job(job_id, f"Keyword count exceeded limit; using first {MAX_KEYWORDS_PER_JOB} values.")
             keywords = keywords[:MAX_KEYWORDS_PER_JOB]
 
-        search_regions = BOTH_REGION_SEQUENCE if req.region == "Both" else [req.region]
+        search_regions = [req.region]
         search_slots = [(keyword, region) for keyword in keywords for region in search_regions]
 
         results = []
@@ -152,7 +185,7 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
         slot_idx = 0
         # Per-slot consecutive stale (empty/no-yield) page counter
         stale_counts: dict[tuple, int] = {slot: 0 for slot in search_slots}
-        max_stale_per_slot = 8  # Exhaust a slot after this many consecutive empty pages
+        max_stale_per_slot = 20  # Increased persistence to find more leads
         hard_page_limit = 500  # Safety cap to prevent infinite loops
         page_count = 0
 
@@ -163,6 +196,17 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
         log_to_job(job_id, f"Target: {req.leadSize} leads | Views: {req.minViews}-{req.maxViews or '∞'} | Subs: {req.minSubs}-{req.maxSubs or '∞'}")
 
         # ---- Main Crawl Loop ----
+        # If using local browser, open a persistent context to prevent window flickering
+        persistent_context = None
+        persistent_page = None
+        if USE_LOCAL_BROWSER:
+            try:
+                persistent_context, persistent_page = await BrowserManager.get_page(region=req.region)
+                if persistent_page:
+                    log_to_job(job_id, "Initialized persistent browser session.")
+            except Exception as e:
+                log_to_job(job_id, f"Warning: Failed to initialize persistent browser: {e}")
+
         while len(results) < req.leadSize and page_count < hard_page_limit:
             active_slots = [s for s in search_slots if s not in exhausted_slots]
             if not active_slots:
@@ -184,14 +228,28 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
             )
 
             # ---- Crawl YouTube Search ----
-            batch_videos, new_token = crawl_youtube_search(
-                keyword=current_kw,
-                region=current_region,
-                date_filter=req.dateFilter,
-                video_type=req.videoType,
-                continuation_token=token,
-                on_log=lambda m: log_to_job(job_id, f"  [crawler] {m}"),
-            )
+            if USE_LOCAL_BROWSER:
+                # Async path: uses a local Playwright browser with natural scrolling
+                batch_videos, new_token = await crawl_youtube_search_async(
+                    keyword=current_kw,
+                    region=current_region,
+                    date_filter=req.dateFilter,
+                    video_type=req.videoType,
+                    continuation_token=token,
+                    on_log=lambda m: log_to_job(job_id, f"  [crawler] {m}"),
+                    page=persistent_page
+                )
+            else:
+                # Sync path: uses ScraperAPI (run in thread to not block the loop)
+                batch_videos, new_token = await asyncio.to_thread(
+                    crawl_youtube_search,
+                    current_kw,
+                    current_region,
+                    req.dateFilter,
+                    req.videoType,
+                    token,
+                    lambda m: log_to_job(job_id, f"  [crawler] {m}"),
+                )
 
             # Update continuation token
             if new_token:
@@ -284,9 +342,9 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
                     continue
 
                 # Region/Country check
-                from core.config import ALLOWED_COUNTRIES_BOTH, ALLOWED_COUNTRIES_US, ALLOWED_COUNTRIES_UK
-                allowed_map = {"Both": ALLOWED_COUNTRIES_BOTH, "US": ALLOWED_COUNTRIES_US, "UK": ALLOWED_COUNTRIES_UK}
-                target_allowed = allowed_map.get(req.region, ALLOWED_COUNTRIES_BOTH)
+                from core.config import ALLOWED_COUNTRIES_US, ALLOWED_COUNTRIES_UK
+                allowed_map = {"US": ALLOWED_COUNTRIES_US, "UK": ALLOWED_COUNTRIES_UK}
+                target_allowed = allowed_map.get(req.region, ALLOWED_COUNTRIES_US)
                 channel_country = (cd.get("country") or "").strip().upper()
                 if channel_country and channel_country not in target_allowed:
                     log_to_job(job_id, f"  Skipped '{v['channelTitle']}' (Country {channel_country} not in {target_allowed}).")
@@ -332,17 +390,18 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
 
         # Log the reason we exited the crawl loop
         if len(results) >= req.leadSize:
-            log_to_job(job_id, f"✅ Target reached! {len(results)}/{req.leadSize} leads collected across {page_count} pages.")
+            log_to_job(job_id, f"[OK] Target reached! {len(results)}/{req.leadSize} leads collected across {page_count} pages.")
         elif page_count >= hard_page_limit:
-            log_to_job(job_id, f"⚠️ Safety page limit ({hard_page_limit}) reached. Got {len(results)}/{req.leadSize} leads.")
+            log_to_job(job_id, f"[WARN] Safety page limit ({hard_page_limit}) reached. Got {len(results)}/{req.leadSize} leads.")
         else:
             log_to_job(
                 job_id,
                 f"Crawl pipeline finished. {len(results)} leads from {page_count} pages (Scanned: {videos_searched})."
             )
 
-            # ---- Google Dork Discovery (supplemental) ----
-        if GOOGLE_DISCOVERY_ENABLED and len(results) < req.leadSize:
+        # ---- Google Dork Discovery (supplemental) ----
+        # Increased focus here if lead target still not met after crawling
+        if len(results) < req.leadSize:
             log_to_job(job_id, "Running Google Dork discovery for additional channels...")
             google_discovered_ids = []
             google_candidates = {}
@@ -469,7 +528,7 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
             if r.get("EMAIL") and r["EMAIL"] != "nil":
                 job["emailsFound"] += 1
 
-        results = await extract_emails(results, on_progress, on_log_msg)
+        results = await extract_emails(results, on_progress, on_log_msg, region=req.region)
         
         # Recalculate one final time to be safe
         final_email_count = sum(1 for r in results if r.get("EMAIL") and r["EMAIL"] != "nil")
@@ -507,9 +566,35 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
             job["error"] = f"YouTube API Error: {type(e).__name__}"
             log_to_job(job_id, f"[ERR] YouTube API HttpError: {e}")
 
+        # --- Emergency Fallback: Save partial results if any exist ---
+        if results:
+            log_to_job(job_id, f"[Fallback] Saving {len(results)} partial leads found before failure...")
+            try:
+                filepath = generate_excel(results, req.keyword)
+                job["filePath"] = filepath
+                log_to_job(job_id, f"[OK] Emergency Export complete: {os.path.basename(filepath)}")
+            except Exception as fe:
+                log_to_job(job_id, f"[ERR] Emergency Export failed: {fe}")
+
     except Exception as e:
         traceback.print_exc()
         job["status"] = "failed"
-        job["error"] = "Extraction failed due to an internal error."
+        job["error"] = f"Internal Error: {type(e).__name__}"
         job["finishedAt"] = datetime.now(timezone.utc).isoformat()
         log_to_job(job_id, f"[ERR] Error: {type(e).__name__}: {e}")
+
+        # --- Emergency Fallback: Save partial results if any exist ---
+        if results:
+            log_to_job(job_id, f"[Fallback] Attempting to save {len(results)} partial leads found before crash...")
+            try:
+                filepath = generate_excel(results, req.keyword)
+                job["filePath"] = filepath
+                log_to_job(job_id, f"[OK] Emergency Export complete: {os.path.basename(filepath)}")
+            except Exception as fe:
+                log_to_job(job_id, f"[ERR] Emergency Export failed: {fe}")
+    finally:
+        if persistent_context:
+            try:
+                await persistent_context.close()
+            except Exception:
+                pass
