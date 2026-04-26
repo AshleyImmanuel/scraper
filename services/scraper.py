@@ -39,8 +39,8 @@ async def extract_emails(results: list[dict], on_progress=None, on_log=None, reg
             channel_id = row["channelId"]
             
             # --- HUMAN-LIKE PACING ---
-            # Increase jitter depth to desynchronize requests more effectively
-            jitter = PACING_DELAY_SECONDS * random.uniform(0.7, 2.5)
+            # Reduced for aggressive "old way" scraping
+            jitter = PACING_DELAY_SECONDS * random.uniform(0.2, 0.8)
             if idx > 0:
                 await asyncio.sleep(jitter)
             
@@ -49,8 +49,17 @@ async def extract_emails(results: list[dict], on_progress=None, on_log=None, reg
                 if on_progress: on_progress(idx + 1, total, channel_name, row["EMAIL"])
                 return
                 
-            # --- TIER 1 & 4 (PARALLEL MASTERY) ---
-            # To maximize yield, we run the About Page (Browser) and Google Dorking (API) in parallel.
+            # --- TIER 1: YouTube Descriptions (FAST, FREE) ---
+            # Prioritize description scraping as requested for the "old way"
+            full_context = f"{row.get('channelDescription','')} {row.get('videoDescription','')}"
+            fast_check = extract_emails_from_text(full_context)
+            if fast_check:
+                row["EMAIL"] = fast_check[0]
+                if on_progress: on_progress(idx + 1, total, channel_name, fast_check[0])
+                return
+
+            # --- TIER 2 & 3 (PARALLEL MASTERY: Browser + Dorking) ---
+            # If not in description, we launch the more aggressive browser and dorking checks
             if on_log: on_log(f"  [yield] Launching parallel extraction (About + Dorking) for {channel_name}...")
             
             async def run_about():
@@ -68,12 +77,12 @@ async def extract_emails(results: list[dict], on_progress=None, on_log=None, reg
                 from services.google_discovery import dork_specific_channel
                 try:
                     # Try name and handle dorking in one go
-                    results = await asyncio.to_thread(dork_specific_channel, channel_name, on_log)
-                    if not results:
+                    dork_results = await asyncio.to_thread(dork_specific_channel, channel_name, on_log)
+                    if not dork_results:
                         handle = row.get("id")
                         if handle and handle.startswith("@"):
-                            results = await asyncio.to_thread(dork_specific_channel, handle, on_log)
-                    return results[0] if results else None
+                            dork_results = await asyncio.to_thread(dork_specific_channel, handle, on_log)
+                    return dork_results[0] if dork_results else None
                 except: pass
                 return None
 
@@ -82,7 +91,7 @@ async def extract_emails(results: list[dict], on_progress=None, on_log=None, reg
             dork_task = asyncio.create_task(run_dorking())
             
             # Wait for either to succeed, or both to finish
-            # Note: We prefer About Page result usually as it's Tier 1, but any hit is a win.
+            # Note: We prefer About Page result usually as it's Tier 2, but any hit is a win.
             try:
                 done, pending = await asyncio.wait(
                     [about_task, dork_task], 
@@ -108,7 +117,6 @@ async def extract_emails(results: list[dict], on_progress=None, on_log=None, reg
                 # Cancel pending
                 for p in pending: 
                     p.cancel()
-                    # Give it a tiny bit of time to run its finally blocks
                 await asyncio.sleep(0.1) 
                 return
 
@@ -132,15 +140,7 @@ async def extract_emails(results: list[dict], on_progress=None, on_log=None, reg
                 if on_progress: on_progress(idx + 1, total, channel_name, email_hit)
                 return
 
-            # --- TIER 2: YouTube Descriptions Fallback ---
-            full_context = f"{row.get('channelDescription','')} {row.get('videoDescription','')}"
-            fast_check = extract_emails_from_text(full_context)
-            if fast_check:
-                row["EMAIL"] = fast_check[0]
-                if on_progress: on_progress(idx + 1, total, channel_name, fast_check[0])
-                return
-
-            # --- TIER 3: External Link Inspection (Linktree, Instagram, etc.) ---
+            # --- TIER 4: External Link Inspection (Linktree, Instagram, etc.) ---
             urls = extract_urls_from_text(full_context)
             if urls:
                 if on_log: on_log(f"  [yield] Scanning {len(urls)} external links for {channel_name}...")
