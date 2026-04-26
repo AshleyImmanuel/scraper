@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi import Request
 
-from core.config import APP_HOST,   APP_PORT, ENABLE_API_DOCS
+from core.config import APP_HOST, APP_PORT, ENABLE_API_DOCS
+print(f"INFO: Configured port: {APP_PORT} (Source: {'PORT env' if os.getenv('PORT') else 'APP_PORT env' if os.getenv('APP_PORT') else 'Default'})")
 from core.middleware import rate_limit_middleware_logic
 from api.endpoints import router as api_router
 
@@ -51,6 +52,8 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 @app.get("/")
 async def serve_index():
+    # Basic health check log
+    print("DEBUG: Root health check requested - serving index.html")
     return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
 # ---- Run ----

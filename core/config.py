@@ -38,7 +38,9 @@ def _env_csv_set(name: str, default_csv: str) -> set[str]:
 
 # ---- App Settings ----
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT = _env_int("APP_PORT", 8001, minimum=1, maximum=65535)
+APP_PORT = _env_int("PORT", _env_int("APP_PORT", 8001), minimum=1, maximum=65535)
+print(f"INFO: [Config] Resolved APP_PORT={APP_PORT}")
+
 ENABLE_API_DOCS = _env_flag("ENABLE_API_DOCS", default=False)
 TRUST_PROXY_HEADERS = _env_flag("TRUST_PROXY_HEADERS", default=False)
 TRUSTED_PROXY_IPS = {
