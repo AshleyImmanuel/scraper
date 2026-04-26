@@ -137,13 +137,26 @@ async def _crawl_with_local_browser(keyword, region, date_filter, video_type, on
         temp_context, page = await BrowserManager.get_page(region=region)
         if not page: return [], None
     try:
-        await page.goto(search_url, wait_until="commit", timeout=BROWSER_TIMEOUT_MS)
-        await page.wait_for_selector('ytd-video-renderer, #captcha-container, .g-recaptcha, #video-title', timeout=30000)
-        if recaptchav2:
-            try:
-                if await page.locator('iframe[src*="recaptcha/api2/anchor"]').first.is_visible(timeout=3000):
-                    async with recaptchav2.AsyncSolver(page) as solver: await solver.solve_recaptcha(wait=True)
-            except: pass
+        # Navigate and wait for content or captcha
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=BROWSER_TIMEOUT_MS)
+        
+        # We wait for either search results or the CAPTCHA container
+        try:
+            await page.wait_for_selector('ytd-video-renderer, #captcha-container, .g-recaptcha, #video-title, #contents', timeout=30000)
+        except Exception:
+            # If still nothing, it might be a slow network or a blank page
+            if on_log: on_log("  [crawler] Warning: Page took too long to show expected elements. Checking current state...")
+
+        # Immediate check for CAPTCHA
+        content = await page.content()
+        if "captcha" in content.lower() or "g-recaptcha" in content or await page.locator("#captcha-container").is_visible():
+            if on_log: on_log("  [crawler] CAPTCHA detected. Attempting bypass...")
+            if recaptchav2:
+                try:
+                    async with recaptchav2.AsyncSolver(page) as solver:
+                        await solver.solve_recaptcha(wait=True)
+                    await asyncio.sleep(2)
+                except: pass
         
         last_height = 0
         for _ in range(15):

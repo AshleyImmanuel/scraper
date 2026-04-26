@@ -39,6 +39,17 @@ async def extract_email_from_about_page(channel_url, on_log=None, session_id=Non
                 if attempt == 2: raise e
                 await asyncio.sleep(6)
 
+        # --- PHASE 0: CRITICAL CAPTCHA CHECK (HIGHEST PRIORITY) ---
+        # Ensure we are not blocked before even looking for buttons
+        content = await page.content()
+        if any(x in content.lower() for x in ["recaptcha", "g-recaptcha", "captcha", "security check", "verify you are a human"]):
+            if on_log: on_log("  [about] [BLOCKER] CAPTCHA detected immediately. Solving first...")
+            await inject_status_banner(page, "ROBOT STATUS: Solving CAPTCHA (CRITICAL BLOCKER)...")
+            if not await solve_captcha_automated(page, on_log):
+                await wait_for_manual_solve(page, on_log)
+            # Post-solve refresh or wait
+            await asyncio.sleep(2)
+
         if not await click_view_email_button(page, on_log, ENABLE_ADVANCED_STEALTH):
             if on_log: on_log("  [about] Button not found.")
             return None

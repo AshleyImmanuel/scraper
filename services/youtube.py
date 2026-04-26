@@ -233,9 +233,10 @@ def is_strictly_rejected(title: str, description: str, channel_title: str, audio
     if any(lang in (audio_lang, def_lang) for lang in ["hi", "ur", "te", "ta", "mr", "bn"]):
         return True
             
-    # 2. Script Check (Devanagari for Hindi/Marathi/etc.)
+    # 2. Script Check (Devanagari + Bengali)
     import re
-    if re.search(r"[\u0900-\u097F]", full_text):
+    # Devanagari: [\u0900-\u097F], Bengali: [\u0980-\u09FF]
+    if re.search(r"[\u0900-\u097F]|[\u0980-\u09FF]", full_text):
         return True
 
     # 3. Strict Keyword check (HINDI, URDU, etc. from configuration)

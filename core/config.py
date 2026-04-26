@@ -70,7 +70,7 @@ YOUTUBE_EXCLUSION_KEYWORDS = _env_csv(
 # Unbypassable language bugs (These are checked unconditionally)
 YOUTUBE_STRICT_EXCLUSIONS = _env_csv(
     "YOUTUBE_STRICT_EXCLUSIONS",
-    "hindi,urdu,telugu,tamil,dub,sub,aur",
+    "hindi,urdu,telugu,tamil,dub,sub,aur,bengali,bangla,bd,in",
     convert_to_upper=True
 )
 

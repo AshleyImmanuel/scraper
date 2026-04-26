@@ -37,6 +37,7 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
     keywords = [k.strip() for k in req.keyword.split(",") if k.strip()][:MAX_KEYWORDS_PER_JOB]
     search_slots = [(k, req.region) for k in keywords]
     results, seen_channel_ids = [], set()
+    leads_with_emails = []
     cont_tokens = {slot: None for slot in search_slots}
     exhausted_slots, page_count = set(), 0
     max_views, max_subs = (req.maxViews if req.maxViews > 0 else None), (req.maxSubs if req.maxSubs > 0 else None)
@@ -44,12 +45,14 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
     persistent_context, persistent_page = (await BrowserManager.get_page(region=req.region)) if USE_LOCAL_BROWSER else (None, None)
 
     try:
-        while len(results) < req.leadSize and page_count < 500:
+        # Loop until we have enough leads with emails OR search space is exhausted
+        while len(leads_with_emails) < req.leadSize and page_count < 500:
             active_slots = [s for s in search_slots if s not in exhausted_slots]
             if not active_slots: break
             
             cur_kw, cur_reg = active_slots[page_count % len(active_slots)]
             page_count += 1
+            job["videosSearched"] = page_count
             log_to_job(job_id, f"[Page {page_count}] Crawling '{cur_kw}'...")
 
             batch, next_token = await crawl_youtube_search_async(
@@ -71,24 +74,41 @@ async def _do_run_extraction(job_id: str, req: ExtractionRequest):
                 log_to_job(job_id, f"  {len(pre_filtered)} candidates. Enriching...")
                 try:
                     details = get_channel_details([v["channelId"] for v in pre_filtered])
+                    batch_candidates = []
                     for v in pre_filtered:
                         cd = details.get(v["channelId"])
                         if cd and req.minSubs <= cd["subscriberCount"] <= (max_subs or float('inf')):
-                            results.append({
+                            batch_candidates.append({
                                 "channelId": v["channelId"], "channelName": v["channelTitle"], "numberOfSubscribers": cd["subscriberCount"],
                                 "EMAIL": "nil", "channelUrl": cd["channelUrl"], "Country": cd.get("country") or req.region,
                                 "viewCount": v["viewCount"], "url": f"https://www.youtube.com/watch?v={v['videoId']}", "title": v["title"],
                                 "channelDescription": cd.get("description", ""), "videoDescription": v.get("description", ""), "duration": v["duration"]
                             })
+                    
+                    if batch_candidates:
+                        # Process this small batch immediately to see if we reached the goal
+                        def update_progress(current, total, name, email):
+                            log_to_job(job_id, f" [Page {page_count} Batch] {name} - {'Found: ' + email if email else 'No email'}")
+
+                        processed_batch = await extract_emails(batch_candidates, update_progress, region=req.region)
+                        for pb in processed_batch:
+                            results.append(pb) # Keep all results for internal tracking
+                            if pb.get("EMAIL") and pb["EMAIL"] != "nil":
+                                leads_with_emails.append(pb)
+                                job["emailsFound"] = len(leads_with_emails) # Real-time sync
+                                if len(leads_with_emails) >= req.leadSize:
+                                    log_to_job(job_id, f"Target goal reached: {len(leads_with_emails)} emails found.")
+                                    break
                 except HttpError as e:
                     if "quotaExceeded" in str(e): break
+            
             if CRAWLER_DELAY_MS > 0: await asyncio.sleep(CRAWLER_DELAY_MS / 1000.0)
 
-        # Final scraping and export
-        job["total"] = len(results)
-        results = await extract_emails(results, lambda c, t, n, e: log_to_job(job_id, f" [{c}/{t}] {n} - {e}"), region=req.region)
-        job["filePath"] = generate_excel(results, req.keyword)
+        # Final export
+        job["total"] = len(leads_with_emails)
+        job["filePath"] = generate_excel(leads_with_emails, req.keyword)
         job["status"] = "completed"
+        job["progress"] = 100
     except Exception as e:
         log_to_job(job_id, f"[ERR] {e}")
         job["status"] = "failed"
